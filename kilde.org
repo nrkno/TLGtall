@@ -207,21 +207,26 @@ WITH
 Vi begynner med å se på hvor stor andel av brukerne som bare har besøkt NRK i desember.
 #+begin_src bigquery
   #standardSQL
-   SELECT userOrProfile, --lojalitet_des, 
-        SUM(IF((`Brukstype des` = 'reaktiverte' OR `Brukstype des` = 'Nye brukere') AND (`Brukstype jan` = 'mistede' OR `Brukstype jan` IS NULL), brukere, 0)) `Kommer og drar i des`,
-        SUM(IF(`Brukstype des` IS NOT NULL OR `Brukstype des` != 'mistede', brukere, 0)) `Tot brukere i desember`,
-        ROUND(SUM(IF((`Brukstype des` = 'reaktiverte' OR `Brukstype des` = 'Nye brukere') AND (`Brukstype jan` = 'mistede' OR `Brukstype jan` IS NULL), brukere, 0)) / SUM(IF(`Brukstype des` IS NOT NULL OR `Brukstype des` != 'mistede', brukere, 0)), 3) andel
-   FROM `nrk-scratchbook.Emil.TLGtall_tot`
-  --WHERE (`Brukstype jan` = 'mistede' OR `Brukstype jan` IS NULL)
-  GROUP BY ALL
-  ORDER BY 1, 2
+  WITH
+    GL AS (
+      SELECT userOrProfile, 
+             SUM(IF((Brukstype_fp = 'reaktiverte' OR Brukstype_fp = 'Nye brukere')
+  		  AND (Brukstype = 'mistede' OR Brukstype = 'dvale'), brukere, 0)) `Kommer og drar i des`,
+             SUM(IF(Brukstype_fp != 'dvale' OR Brukstype_fp != 'mistede', brukere, 0)) `Tot brukere i desember`,
+        FROM `nrk-scratchbook.Emil.TLGtall_tot`
+       WHERE dato = '2025-01-22'
+       GROUP BY ALL)
+
+    SELECT *, ROUND(`Kommer og drar i des` / `Tot brukere i desember`, 3) `Andel som kommer og drar i desemer`
+    FROM GL
+    ORDER BY 1, 2
 #+end_src
 
 #+RESULTS:
-| userOrProfile | Kommer og drar i des | Tot brukere i desember | andel |
-|---------------+----------------------+------------------------+-------|
-| profile       |                29042 |                 310036 | 0.094 |
-| user          |                71894 |                1970740 | 0.036 |
+| userOrProfile | Kommer og drar i des | Tot brukere i desember | Andel som kommer og drar i desemer |
+|---------------+----------------------+------------------------+------------------------------------|
+| profile       |                25796 |                 521774 |                              0.049 |
+| user          |                58829 |                2821716 |                              0.021 |
 
 Det er bare 9,4 % av barneprofilene og 3,6 % av voksenprofilene som kommer til oss og forlater oss i desember.
 
