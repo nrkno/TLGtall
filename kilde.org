@@ -290,22 +290,33 @@ Nå gjør vi samme øvelse per tjeneste:
 Nå skal vi gjøre samme øvelse for voksenprofiler fordelt på alder
 #+begin_src bigquery
   #standardSQL
-   SELECT aldersgruppe, --lojalitet_des, 
-        SUM(IF((`Brukstype des` = 'reaktiverte' OR `Brukstype des` = 'Nye brukere') AND (`Brukstype jan` = 'mistede' OR `Brukstype jan` IS NULL), brukere, 0)) `Kommer og drar i des`,
-        SUM(IF(`Brukstype des` IS NOT NULL OR `Brukstype des` != 'mistede', brukere, 0)) `Tot brukere i desember`,
-        ROUND(SUM(IF((`Brukstype des` = 'reaktiverte' OR `Brukstype des` = 'Nye brukere') AND (`Brukstype jan` = 'mistede' OR `Brukstype jan` IS NULL), brukere, 0)) / SUM(IF(`Brukstype des` IS NOT NULL OR `Brukstype des` != 'mistede', brukere, 0)), 3) andel
-   FROM `nrk-scratchbook.Emil.TLGtall_tot`
-  WHERE userOrProfile = 'user' AND aldersgruppe != '-1'
-  GROUP BY ALL
-  ORDER BY 1, 2
+  WITH
+    GL AS (
+      SELECT aldersgruppe, 
+             SUM(IF((Brukstype_fp = 'reaktiverte' OR Brukstype_fp = 'Nye brukere')
+  		  AND (Brukstype = 'mistede' OR Brukstype = 'dvale'), brukere, 0)) `Kommer og drar i des`,
+             SUM(IF(Brukstype_fp != 'dvale' OR Brukstype_fp != 'mistede', brukere, 0)) `Tot brukere i desember`,
+        FROM `nrk-scratchbook.Emil.TLGtall_tot`
+       WHERE dato = '2025-01-22'
+         AND userOrProfile = 'user'
+         AND (aldersgruppe != '-1' OR aldersgruppe IS NULL)
+       GROUP BY ALL)
+
+    SELECT *, ROUND(`Kommer og drar i des` / `Tot brukere i desember`, 3) `Andel som kommer og drar i desemer`
+    FROM GL
+    ORDER BY 1
 #+end_src
 
+
 #+RESULTS:
-| aldersgruppe | Kommer og drar i des | Tot brukere i desember | andel |
-|--------------+----------------------+------------------------+-------|
-|         0-12 |                 5238 |                  52784 | 0.099 |
-|        13-19 |                 8080 |                  93457 | 0.086 |
-|        20-29 |                10795 |                 179070 |  0.06 |
-|        30-49 |                14403 |                 368459 | 0.039 |
-|        50-69 |                12452 |                 380321 | 0.033 |
-|          70+ |                 5913 |                 152976 | 0.039 |
+| aldersgruppe | Kommer og drar i des | Tot brukere i desember | Andel som kommer og drar i desemer |
+|--------------+----------------------+------------------------+------------------------------------|
+|              |                15013 |                 899663 |                              0.017 |
+|         0-12 |                 3100 |                  94874 |                              0.033 |
+|        13-19 |                 5695 |                 186549 |                              0.031 |
+|        20-29 |                 7985 |                 305689 |                              0.026 |
+|        30-49 |                11221 |                 528023 |                              0.021 |
+|        50-69 |                10310 |                 547831 |                              0.019 |
+|          70+ |                 5505 |                 259087 |                              0.021 |
+
+*** 
