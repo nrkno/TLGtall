@@ -220,38 +220,43 @@ Vi begynner med å se på hvor stor andel av brukerne som bare har besøkt NRK i
 | profile       |                25796 |                 521774 |                              0.049 |
 | user          |                58829 |                2821716 |                              0.021 |
 
-Det er bare 9,4 % av barneprofilene og 3,6 % av voksenprofilene som kommer til oss og forlater oss i desember.
+Det er bare 4,9 % av barneprofilene og 2,1 % av voksenprofilene som kommer til oss og forlater oss i desember.
 
 *** Lojalitet
 Hvordan ser dette ut per lojalitetsgruppe? Blanke verdier er brukere som ikke har fått noen gruppe ennå.
 
 #+begin_src bigquery
   #standardSQL
-   SELECT userOrProfile, lojalitet_des lojalitet, 
-        SUM(IF((`Brukstype des` = 'reaktiverte' OR `Brukstype des` = 'Nye brukere') AND (`Brukstype jan` = 'mistede' OR `Brukstype jan` IS NULL), brukere, 0)) `Kommer og drar i des`,
-        SUM(IF(`Brukstype des` IS NOT NULL OR `Brukstype des` != 'mistede', brukere, 0)) `Tot brukere i desember`,
-        ROUND(SUM(IF((`Brukstype des` = 'reaktiverte' OR `Brukstype des` = 'Nye brukere') AND (`Brukstype jan` = 'mistede' OR `Brukstype jan` IS NULL), brukere, 0)) / SUM(IF(`Brukstype des` IS NOT NULL OR `Brukstype des` != 'mistede', brukere, 0)), 3) andel
-   FROM `nrk-scratchbook.Emil.TLGtall_tot`
-  --WHERE (`Brukstype jan` = 'mistede' OR `Brukstype jan` IS NULL)
-  GROUP BY ALL
-  ORDER BY 1, 2
+  WITH
+    GL AS (
+      SELECT userOrProfile, loyaltyGroup_fp lojalitet,
+             SUM(IF((Brukstype_fp = 'reaktiverte' OR Brukstype_fp = 'Nye brukere')
+  		  AND (Brukstype = 'mistede' OR Brukstype = 'dvale'), brukere, 0)) `Kommer og drar i des`,
+             SUM(IF(Brukstype_fp != 'dvale' OR Brukstype_fp != 'mistede', brukere, 0)) `Tot brukere i desember`,
+        FROM `nrk-scratchbook.Emil.TLGtall_tot`
+       WHERE dato = '2025-01-22'
+       GROUP BY ALL)
+
+    SELECT *, ROUND(`Kommer og drar i des` / `Tot brukere i desember`, 3) `Andel som kommer og drar i desemer`
+    FROM GL
+    ORDER BY 1, 2
 #+end_src
 
 #+RESULTS:
-| userOrProfile | lojalitet       | Kommer og drar i des | Tot brukere i desember | andel |
-|---------------+-----------------+----------------------+------------------------+-------|
-| profile       |                 |                 1237 |                   1771 | 0.698 |
-| profile       | Fan             |                   28 |                  64762 |   0.0 |
-| profile       | Fast Følge      |                  464 |                  46602 |  0.01 |
-| profile       | Langdistanse    |                 1809 |                  54719 | 0.033 |
-| profile       | One-Night-Stand |                 5966 |                  56099 | 0.106 |
-| profile       | Slår opp        |                19538 |                  86083 | 0.227 |
-| user          |                 |                 1836 |                   2143 | 0.857 |
-| user          | Fan             |                   57 |                 733191 |   0.0 |
-| user          | Fast Følge      |                  796 |                 289373 | 0.003 |
-| user          | Langdistanse    |                 3186 |                 289490 | 0.011 |
-| user          | One-Night-Stand |                11669 |                 256429 | 0.046 |
-| user          | Slår opp        |                54350 |                 400114 | 0.136 |
+| userOrProfile | lojalitet       | Kommer og drar i des | Tot brukere i desember | Andel som kommer og drar i desemer |
+|---------------+-----------------+----------------------+------------------------+------------------------------------|
+| profile       |                 |                    0 |                 186724 |                                0.0 |
+| profile       | Fan             |                   26 |                  64762 |                                0.0 |
+| profile       | Fast Følge      |                  423 |                  46602 |                              0.009 |
+| profile       | Langdistanse    |                 1666 |                  54719 |                               0.03 |
+| profile       | One-Night-Stand |                 5546 |                  56246 |                              0.099 |
+| profile       | Slår opp        |                18135 |                 112721 |                              0.161 |
+| user          |                 |                    0 |                 757790 |                                0.0 |
+| user          | Fan             |                   51 |                 733191 |                                0.0 |
+| user          | Fast Følge      |                  688 |                 289372 |                              0.002 |
+| user          | Langdistanse    |                 2762 |                 289489 |                               0.01 |
+| user          | One-Night-Stand |                10113 |                 257729 |                              0.039 |
+| user          | Slår opp        |                45215 |                 494145 |                              0.092 |
 
 Ikke overraskende er det flest antall brukerne som er minst lojale som kommer og går i desember. Det er også blant disse brukerne andelen som kommer og går i desember er størst.
 
