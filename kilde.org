@@ -1,0 +1,309 @@
+#+TITLE: Brukere som kommer til oss - og forlater oss - i desember
+#+AUTHOR: Elise og Emil
+#+DATE: 22. januar 2025
+#+PROPERTY: header-args:bigquery :eval never-export :exports both
+#+EXPORT_FILE_NAME: readme.org
+
+#+begin_src emacs-lisp :exports results :results none
+  ;; Dette gjør om bigquery-blokker til sql-blokker (for å få fargelegging på teksten)
+  ;; og fjerner results-nøkkelordet (som gjemmer resultatene på github)
+  (defun bytt-bigquery-til-sql (s backend info)
+    (replace-regexp-in-string "bigquery" "sql" s))
+
+  (defun fjern-resultatmerke (s backend info)
+    (replace-regexp-in-string "#\\+results:[ ]+" "" s))
+
+  (add-to-list 'org-export-filter-src-block-functions
+    	     'bytt-bigquery-til-sql)
+  (add-to-list 'org-export-filter-body-functions
+    	     'fjern-resultatmerke)
+#+end_src
+* Innledning
+Desember er NRKs -- og spesielt NRK TVs -- beste måned. Det er da alle tårer som gråtes over at TV2 engasjerer brukerne mer enn NRK gjennom høsten, tørkes, og vi kan igjen klappe oss selv på skulderen og tenke "vi gjør det tross alt jævlig bra". Men så sprøytes det kaldt vann i årene igjen i januar -- eller gjør det det? Dette skal vi komme til bunns i. Og dersom det faktisk er tilfellet at julebruken er så stor som vi tror, hvem er da disse brukerne som kommer og går i desember? Hva kjennetegner dem?
+
+* Desemberbrukerne
+Her skal vi få noen harde fakta på bordet. Vi undersøker derfor hvor mange brukere som brukte oss kun i desember.
+
+** Hva vi vet
+Fra den utmerkede PowerBI-rapporten [[https://app.powerbi.com/groups/me/reports/72329435-35f3-41bb-aca0-04ab7fa7648f/8e265bcd68002eea17ad?ctid=9d2ac018-e843-4e14-9e2b-4e0ddac75450&experience=power-bi&bookmarkGuid=b2660ab35ca0c8c3000d][churn rapport]] som Anna har laget, kan vi lese at for NRK Totalt er ukentlig gjennomtrekk 17,3 % og månedlig 12,5 %. Dette ser vi skjermbildet under.
+
+[[file:figurer/Churnskjermdump.png]]
+
+Det ukentlige gjennomtrekket har heller ikke endret seg vesentlig gjennom året.
+
+[[file:figurer/Churnskjermdump_detalj.png]]
+
+Allerede her tenker vi at det kanskje ikke er så ille som den allminnelige oppfatningen er.
+
+** Spade og bøtte
+Vi går videre med å bryte ned brukerne på profiltype, aldersgruppe, tjeneste og aktive dager i perioden. Vi konsentrerer oss om brukere som besøker NRK i løpet av tre fireukersperioder som slutter henholdvis 27. november og 25. desember 2024, og 22. januar 2025. For å få til dette har vi laget følgende to spørringer:
+
+#+begin_src bigquery :results silent
+  #standardSQL
+  CREATE OR REPLACE TABLE `nrk-scratchbook.Emil.TLGtall_tot` AS (
+  WITH
+    ALL_DATES_AND_USERS AS (
+      SELECT partitionDate, nrkUserId
+        FROM UNNEST(GENERATE_DATE_ARRAY('2024-11-27', '2025-01-22', INTERVAL 28 day)) partitionDate
+             CROSS JOIN (SELECT nrkUserId FROM `nrk-datahub.prod.registered_users_v01`)
+    ),
+
+    SOURCE_ALL AS (
+      SELECT partitionDate dato, nrkUserId, userOrProfile, loyaltyGroup,
+             IF(userOrProfile != 'user',
+               CASE
+                 WHEN EXTRACT(YEAR FROM partitionDate) - birthYear IS NULL THEN NULL
+                 WHEN EXTRACT(YEAR FROM partitionDate) - birthYear < 13 THEN CAST(EXTRACT(YEAR FROM partitionDate) - birthYear AS STRING)
+                 ELSE '13'
+               END,
+               CASE
+                 WHEN EXTRACT(YEAR FROM partitionDate) - birthYear IS NULL THEN NULL
+                 WHEN EXTRACT(YEAR FROM partitionDate) - birthYear < 0 THEN '-1'
+                 WHEN EXTRACT(YEAR FROM partitionDate) - birthYear < 13 THEN '0-12'
+                 WHEN EXTRACT(YEAR FROM partitionDate) - birthYear < 20 THEN '13-19'
+                 WHEN EXTRACT(YEAR FROM partitionDate) - birthYear < 30 THEN '20-29'
+                 WHEN EXTRACT(YEAR FROM partitionDate) - birthYear < 50 THEN '30-49'
+                 WHEN EXTRACT(YEAR FROM partitionDate) - birthYear < 70 THEN '50-69'
+                 ELSE '70+'
+               END) aldersgruppe,
+             DATE(registered) >= partitionDate - 28 AND DATE(registered) < partitionDate ny_bruker,
+             CASE
+               WHEN last28Days.daysVisited = 0 THEN 0
+               WHEN last28Days.daysVisited < 4 THEN 3
+               WHEN last28Days.daysVisited < 7 THEN 6
+               WHEN last28Days.daysVisited < 11 THEN 10
+               WHEN last28Days.daysVisited < 16 THEN 15
+               WHEN last28Days.daysVisited < 22 THEN 21
+               WHEN last28Days.daysVisited < 29 THEN 28
+             END aktive_dager,
+        FROM ALL_DATES_AND_USERS
+             LEFT JOIN `nrk-datahub.prod.registered_users_v01` USING(nrkUserId)
+             LEFT JOIN `nrk-datahub.snowplow_aggregate.total_rfv` USING(partitionDate, nrkUserId)
+       WHERE partitionDate IN ('2024-11-27', '2024-12-25', '2025-01-22')
+       ORDER BY nrkUserId, dato
+    ),
+
+    FORRIGE_PERIODE28 AS (
+      SELECT nov.*,
+             des.loyaltyGroup lojalitet_des, des.ny_bruker `Ny i desember`, des.aktive_dager `Aktive dager i des`,
+             jan.loyaltyGroup lojalitet_jan, jan.ny_bruker `Ny i januar`, jan.aktive_dager `Aktive dager i jan`
+        FROM (SELECT * FROM SOURCE_ALL WHERE dato = '2024-11-27') nov
+             LEFT JOIN (SELECT * FROM SOURCE_ALL WHERE dato = '2024-12-25') des USING(nrkUserId)
+             LEFT JOIN (SELECT * FROM SOURCE_ALL WHERE dato = '2025-01-22') jan USING(nrkUserId)
+    ),
+
+    AGG AS (
+      SELECT dato, userOrProfile, aldersgruppe, 
+             loyaltyGroup lojalitet_nov,
+             lojalitet_des,
+             lojalitet_jan, 
+             IFNULL(aktive_dager, 0) `Aktive dager i nov`, 
+             IFNULL(`Aktive dager i des`, 0) `Aktive dager i des`,
+             IFNULL(`Aktive dager i jan`, 0) `Aktive dager i jan`,
+             CASE
+               WHEN `Ny i desember` THEN 'Nye brukere'
+               WHEN IFNULL(aktive_dager, 0) > 0 AND IFNULL(`Aktive dager i des`, 0) > 0 THEN 'tilbakevendende'
+               WHEN IFNULL(aktive_dager, 0) > 0 AND NOT IFNULL(`Aktive dager i des`, 0) > 0 THEN 'mistede'
+               WHEN NOT IFNULL(aktive_dager, 0) > 0 AND IFNULL(`Aktive dager i des`, 0) > 0 THEN 'reaktiverte'
+             END `Brukstype des`,
+             CASE
+               WHEN `Ny i januar` THEN 'Nye brukere'
+               WHEN IFNULL(`Aktive dager i des`, 0) > 0 AND IFNULL(`Aktive dager i jan`, 0) > 0 THEN 'tilbakevendende'
+               WHEN IFNULL(`Aktive dager i des`, 0) > 0 AND NOT IFNULL(`Aktive dager i jan`, 0) > 0 THEN 'mistede'
+               WHEN NOT IFNULL(`Aktive dager i des`, 0) > 0 AND IFNULL(`Aktive dager i jan`, 0) > 0 THEN 'reaktiverte'
+             END `Brukstype jan`,
+             COUNT(nrkUserId) brukere
+        FROM FORRIGE_PERIODE28
+       GROUP BY ALL)
+
+    SELECT *
+      FROM AGG)
+#+end_src
+
+Denne spørringen gir samme resultat som over, men fordeler bruken på tjenestene NRK.no, NRK Radio, NRK TV og NRK Super.
+#+begin_src bigquery :results silent
+CREATE OR REPLACE TABLE `nrk-scratchbook.Emil.TLGtall` AS (
+
+WITH
+  ALL_DATES_AND_USERS AS (
+    SELECT partitionDate, nrkUserId, nrkService
+      FROM UNNEST(GENERATE_DATE_ARRAY('2024-11-27', '2025-01-22', INTERVAL 28 day)) partitionDate
+           CROSS JOIN (SELECT nrkUserId FROM `nrk-datahub.prod.registered_users_v01`)
+           CROSS JOIN UNNEST(['nrkno', 'nrkradio', 'nrksuper', 'nrktv']) nrkService
+  ),
+
+  SOURCE_ALL AS (
+    SELECT partitionDate dato, nrkUserId, userOrProfile, loyaltyGroup.groupName loyaltyGroup, nrkService,
+           IF(userOrProfile != 'user',
+             CASE
+               WHEN EXTRACT(YEAR FROM partitionDate) - birthYear IS NULL THEN NULL
+               WHEN EXTRACT(YEAR FROM partitionDate) - birthYear < 13 THEN CAST(EXTRACT(YEAR FROM partitionDate) - birthYear AS STRING)
+               ELSE '13'
+             END,
+             CASE
+               WHEN EXTRACT(YEAR FROM partitionDate) - birthYear IS NULL THEN NULL
+               WHEN EXTRACT(YEAR FROM partitionDate) - birthYear < 0 THEN '-1'
+               WHEN EXTRACT(YEAR FROM partitionDate) - birthYear < 13 THEN '0-12'
+               WHEN EXTRACT(YEAR FROM partitionDate) - birthYear < 20 THEN '13-19'
+               WHEN EXTRACT(YEAR FROM partitionDate) - birthYear < 30 THEN '20-29'
+               WHEN EXTRACT(YEAR FROM partitionDate) - birthYear < 50 THEN '30-49'
+               WHEN EXTRACT(YEAR FROM partitionDate) - birthYear < 70 THEN '50-69'
+               ELSE '70+'
+             END) aldersgruppe,
+           DATE(registered) >= partitionDate - 28 AND DATE(registered) < partitionDate ny_bruker,
+           CASE
+             WHEN last28Days.daysVisited = 0 THEN 0
+             WHEN last28Days.daysVisited < 4 THEN 3
+             WHEN last28Days.daysVisited < 7 THEN 6
+             WHEN last28Days.daysVisited < 11 THEN 10
+             WHEN last28Days.daysVisited < 16 THEN 15
+             WHEN last28Days.daysVisited < 22 THEN 21
+             WHEN last28Days.daysVisited < 29 THEN 28
+           END aktive_dager,
+      FROM ALL_DATES_AND_USERS
+           LEFT JOIN `nrk-datahub.prod.registered_users_v01` USING(nrkUserId)
+           LEFT JOIN `nrk-datahub.snowplow_aggregate.rfv_v01` USING(partitionDate, nrkUserId, nrkService)
+     WHERE partitionDate IN ('2024-11-27', '2024-12-25', '2025-01-22')
+     ORDER BY nrkUserId, dato
+  ),
+
+  FORRIGE_PERIODE28 AS (
+    SELECT nov.*,
+           des.loyaltyGroup lojalitet_des, des.ny_bruker `Ny i desember`, des.aktive_dager `Aktive dager i des`,
+           jan.loyaltyGroup lojalitet_jan, jan.ny_bruker `Ny i januar`, jan.aktive_dager `Aktive dager i jan`
+      FROM (SELECT * FROM SOURCE_ALL WHERE dato = '2024-11-27') nov
+           LEFT JOIN (SELECT * FROM SOURCE_ALL WHERE dato = '2024-12-25') des USING(nrkUserId)
+           LEFT JOIN (SELECT * FROM SOURCE_ALL WHERE dato = '2025-01-22') jan USING(nrkUserId)
+  ),
+
+  AGG AS (
+    SELECT dato, userOrProfile, aldersgruppe, nrkService,
+           loyaltyGroup lojalitet_nov,
+           lojalitet_des,
+           lojalitet_jan, 
+           IFNULL(aktive_dager, 0) `Aktive dager i nov`, 
+           IFNULL(`Aktive dager i des`, 0) `Aktive dager i des`,
+           IFNULL(`Aktive dager i jan`, 0) `Aktive dager i jan`,
+           CASE
+             WHEN `Ny i desember` THEN 'Nye brukere'
+             WHEN IFNULL(aktive_dager, 0) > 0 AND IFNULL(`Aktive dager i des`, 0) > 0 THEN 'tilbakevendende'
+             WHEN IFNULL(aktive_dager, 0) > 0 AND NOT IFNULL(`Aktive dager i des`, 0) > 0 THEN 'mistede'
+             WHEN NOT IFNULL(aktive_dager, 0) > 0 AND IFNULL(`Aktive dager i des`, 0) > 0 THEN 'reaktiverte'
+           END `Brukstype des`,
+           CASE
+             WHEN `Ny i januar` THEN 'Nye brukere'
+             WHEN IFNULL(`Aktive dager i des`, 0) > 0 AND IFNULL(`Aktive dager i jan`, 0) > 0 THEN 'tilbakevendende'
+             WHEN IFNULL(`Aktive dager i des`, 0) > 0 AND NOT IFNULL(`Aktive dager i jan`, 0) > 0 THEN 'mistede'
+             WHEN NOT IFNULL(`Aktive dager i des`, 0) > 0 AND IFNULL(`Aktive dager i jan`, 0) > 0 THEN 'reaktiverte'
+           END `Brukstype jan`,
+           COUNT(nrkUserId) brukere
+      FROM FORRIGE_PERIODE28
+     GROUP BY ALL)
+     
+  SELECT * FROM AGG)
+#+end_src
+
+** Det første jordlaget
+Vi begynner med å se på hvor stor andel av brukerne som bare har besøkt NRK i desember.
+#+begin_src bigquery
+  #standardSQL
+   SELECT userOrProfile, --lojalitet_des, 
+        SUM(IF((`Brukstype des` = 'reaktiverte' OR `Brukstype des` = 'Nye brukere') AND (`Brukstype jan` = 'mistede' OR `Brukstype jan` IS NULL), brukere, 0)) `Kommer og drar i des`,
+        SUM(IF(`Brukstype des` IS NOT NULL OR `Brukstype des` != 'mistede', brukere, 0)) `Tot brukere i desember`,
+        ROUND(SUM(IF((`Brukstype des` = 'reaktiverte' OR `Brukstype des` = 'Nye brukere') AND (`Brukstype jan` = 'mistede' OR `Brukstype jan` IS NULL), brukere, 0)) / SUM(IF(`Brukstype des` IS NOT NULL OR `Brukstype des` != 'mistede', brukere, 0)), 3) andel
+   FROM `nrk-scratchbook.Emil.TLGtall_tot`
+  --WHERE (`Brukstype jan` = 'mistede' OR `Brukstype jan` IS NULL)
+  GROUP BY ALL
+  ORDER BY 1, 2
+#+end_src
+
+#+RESULTS:
+| userOrProfile | Kommer og drar i des | Tot brukere i desember | andel |
+|---------------+----------------------+------------------------+-------|
+| profile       |                29042 |                 310036 | 0.094 |
+| user          |                71894 |                1970740 | 0.036 |
+
+Det er bare 9,4 % av barneprofilene og 3,6 % av voksenprofilene som kommer til oss og forlater oss i desember.
+
+*** Lojalitet
+Hvordan ser dette ut per lojalitetsgruppe? Blanke verdier er brukere som ikke har fått noen gruppe ennå.
+
+#+begin_src bigquery
+  #standardSQL
+   SELECT userOrProfile, lojalitet_des lojalitet, 
+        SUM(IF((`Brukstype des` = 'reaktiverte' OR `Brukstype des` = 'Nye brukere') AND (`Brukstype jan` = 'mistede' OR `Brukstype jan` IS NULL), brukere, 0)) `Kommer og drar i des`,
+        SUM(IF(`Brukstype des` IS NOT NULL OR `Brukstype des` != 'mistede', brukere, 0)) `Tot brukere i desember`,
+        ROUND(SUM(IF((`Brukstype des` = 'reaktiverte' OR `Brukstype des` = 'Nye brukere') AND (`Brukstype jan` = 'mistede' OR `Brukstype jan` IS NULL), brukere, 0)) / SUM(IF(`Brukstype des` IS NOT NULL OR `Brukstype des` != 'mistede', brukere, 0)), 3) andel
+   FROM `nrk-scratchbook.Emil.TLGtall_tot`
+  --WHERE (`Brukstype jan` = 'mistede' OR `Brukstype jan` IS NULL)
+  GROUP BY ALL
+  ORDER BY 1, 2
+#+end_src
+
+#+RESULTS:
+| userOrProfile | lojalitet       | Kommer og drar i des | Tot brukere i desember | andel |
+|---------------+-----------------+----------------------+------------------------+-------|
+| profile       |                 |                 1237 |                   1771 | 0.698 |
+| profile       | Fan             |                   28 |                  64762 |   0.0 |
+| profile       | Fast Følge      |                  464 |                  46602 |  0.01 |
+| profile       | Langdistanse    |                 1809 |                  54719 | 0.033 |
+| profile       | One-Night-Stand |                 5966 |                  56099 | 0.106 |
+| profile       | Slår opp        |                19538 |                  86083 | 0.227 |
+| user          |                 |                 1836 |                   2143 | 0.857 |
+| user          | Fan             |                   57 |                 733191 |   0.0 |
+| user          | Fast Følge      |                  796 |                 289373 | 0.003 |
+| user          | Langdistanse    |                 3186 |                 289490 | 0.011 |
+| user          | One-Night-Stand |                11669 |                 256429 | 0.046 |
+| user          | Slår opp        |                54350 |                 400114 | 0.136 |
+
+Ikke overraskende er det flest antall brukerne som er minst lojale som kommer og går i desember. Det er også blant disse brukerne andelen som kommer og går i desember er størst.
+
+*** Tjeneste
+Nå gjør vi samme øvelse per tjeneste:
+#+begin_src bigquery
+  #standardSQL
+   SELECT userOrProfile, nrkService, 
+        SUM(IF((`Brukstype des` = 'reaktiverte' OR `Brukstype des` = 'Nye brukere') AND (`Brukstype jan` = 'mistede' OR `Brukstype jan` IS NULL), brukere, 0)) `Kommer og drar i des`,
+        SUM(IF(`Brukstype des` IS NOT NULL OR `Brukstype des` != 'mistede', brukere, 0)) `Tot brukere i desember`,
+        ROUND(SUM(IF((`Brukstype des` = 'reaktiverte' OR `Brukstype des` = 'Nye brukere') AND (`Brukstype jan` = 'mistede' OR `Brukstype jan` IS NULL), brukere, 0)) / SUM(IF(`Brukstype des` IS NOT NULL OR `Brukstype des` != 'mistede', brukere, 0)), 3) andel
+   FROM `nrk-scratchbook.Emil.TLGtall`
+  --WHERE (`Brukstype jan` = 'mistede' OR `Brukstype jan` IS NULL)
+  GROUP BY ALL
+  ORDER BY 1, 2
+#+end_src
+
+#+RESULTS:
+| userOrProfile | nrkService | Kommer og drar i des | Tot brukere i desember | andel |
+|---------------+------------+----------------------+------------------------+-------|
+| profile       | nrkno      |              1082918 |                1494980 | 0.724 |
+| profile       | nrkradio   |              1082918 |                1494980 | 0.724 |
+| profile       | nrksuper   |               552519 |                3341000 | 0.165 |
+| profile       | nrktv      |               611282 |                3080540 | 0.198 |
+| user          | nrkno      |              3203216 |               21539644 | 0.149 |
+| user          | nrkradio   |              4623324 |               17065820 | 0.271 |
+| user          | nrksuper   |              6718204 |               12596668 | 0.533 |
+| user          | nrktv      |              2312538 |               24758064 | 0.093 |
+
+*** Aldersgrupper
+Nå skal vi gjøre samme øvelse for voksenprofiler fordelt på alder
+#+begin_src bigquery
+  #standardSQL
+   SELECT aldersgruppe, --lojalitet_des, 
+        SUM(IF((`Brukstype des` = 'reaktiverte' OR `Brukstype des` = 'Nye brukere') AND (`Brukstype jan` = 'mistede' OR `Brukstype jan` IS NULL), brukere, 0)) `Kommer og drar i des`,
+        SUM(IF(`Brukstype des` IS NOT NULL OR `Brukstype des` != 'mistede', brukere, 0)) `Tot brukere i desember`,
+        ROUND(SUM(IF((`Brukstype des` = 'reaktiverte' OR `Brukstype des` = 'Nye brukere') AND (`Brukstype jan` = 'mistede' OR `Brukstype jan` IS NULL), brukere, 0)) / SUM(IF(`Brukstype des` IS NOT NULL OR `Brukstype des` != 'mistede', brukere, 0)), 3) andel
+   FROM `nrk-scratchbook.Emil.TLGtall_tot`
+  WHERE userOrProfile = 'user' AND aldersgruppe != '-1'
+  GROUP BY ALL
+  ORDER BY 1, 2
+#+end_src
+
+#+RESULTS:
+| aldersgruppe | Kommer og drar i des | Tot brukere i desember | andel |
+|--------------+----------------------+------------------------+-------|
+|         0-12 |                 5238 |                  52784 | 0.099 |
+|        13-19 |                 8080 |                  93457 | 0.086 |
+|        20-29 |                10795 |                 179070 |  0.06 |
+|        30-49 |                14403 |                 368459 | 0.039 |
+|        50-69 |                12452 |                 380321 | 0.033 |
+|          70+ |                 5913 |                 152976 | 0.039 |
