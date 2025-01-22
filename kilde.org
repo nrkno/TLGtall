@@ -42,12 +42,6 @@ Vi går videre med å bryte ned brukerne på profiltype, aldersgruppe, tjeneste 
   #standardSQL
   CREATE OR REPLACE TABLE `nrk-scratchbook.Emil.TLGtall_tot` AS (
   WITH
-    ALL_DATES_AND_USERS AS (
-      SELECT partitionDate, nrkUserId
-        FROM UNNEST(GENERATE_DATE_ARRAY('2024-11-27', '2025-01-22', INTERVAL 28 day)) partitionDate
-             CROSS JOIN (SELECT nrkUserId FROM `nrk-datahub.prod.registered_users_v01`)
-    ),
-
     SOURCE_ALL AS (
       SELECT partitionDate dato, nrkUserId, userOrProfile, loyaltyGroup,
              IF(userOrProfile != 'user',
@@ -76,42 +70,40 @@ Vi går videre med å bryte ned brukerne på profiltype, aldersgruppe, tjeneste 
                WHEN last28Days.daysVisited < 22 THEN 21
                WHEN last28Days.daysVisited < 29 THEN 28
              END aktive_dager,
-        FROM ALL_DATES_AND_USERS
+        FROM `nrk-datahub.snowplow_aggregate.total_rfv`
              LEFT JOIN `nrk-datahub.prod.registered_users_v01` USING(nrkUserId)
-             LEFT JOIN `nrk-datahub.snowplow_aggregate.total_rfv` USING(partitionDate, nrkUserId)
-       WHERE partitionDate IN ('2024-11-27', '2024-12-25', '2025-01-22')
+       WHERE partitionDate IN UNNEST(GENERATE_DATE_ARRAY('2025-01-22' - 28*12, '2025-01-22', INTERVAL 28 day))
        ORDER BY nrkUserId, dato
     ),
 
     FORRIGE_PERIODE28 AS (
-      SELECT nov.*,
-             des.loyaltyGroup lojalitet_des, des.ny_bruker `Ny i desember`, des.aktive_dager `Aktive dager i des`,
-             jan.loyaltyGroup lojalitet_jan, jan.ny_bruker `Ny i januar`, jan.aktive_dager `Aktive dager i jan`
-        FROM (SELECT * FROM SOURCE_ALL WHERE dato = '2024-11-27') nov
-             LEFT JOIN (SELECT * FROM SOURCE_ALL WHERE dato = '2024-12-25') des USING(nrkUserId)
-             LEFT JOIN (SELECT * FROM SOURCE_ALL WHERE dato = '2025-01-22') jan USING(nrkUserId)
-    ),
+    SELECT sa.*,
+           sa_fp.loyaltyGroup loyaltyGroup_fp, sa_fp.aktive_dager aktive_dager_fp, sa_fp.ny_bruker ny_bruker_fp,
+           sa_ffp.loyaltyGroup loyaltyGroup_ffp, sa_ffp.aktive_dager aktive_dager_ffp,-- sa_ffp.ny_bruker ny_bruker_ffp
+      FROM SOURCE_ALL sa
+           LEFT JOIN SOURCE_ALL sa_fp ON sa.dato = sa_fp.dato + 28 AND sa.nrkUserId = sa_fp.nrkUserId
+           LEFT JOIN SOURCE_ALL sa_ffp ON sa.dato = sa_ffp.dato + 28 * 2 AND sa.nrkUserId = sa_ffp.nrkUserId),
 
     AGG AS (
       SELECT dato, userOrProfile, aldersgruppe, 
-             loyaltyGroup lojalitet_nov,
-             lojalitet_des,
-             lojalitet_jan, 
-             IFNULL(aktive_dager, 0) `Aktive dager i nov`, 
-             IFNULL(`Aktive dager i des`, 0) `Aktive dager i des`,
-             IFNULL(`Aktive dager i jan`, 0) `Aktive dager i jan`,
+             loyaltyGroup,
+             loyaltyGroup_fp,
+             aktive_dager,
+             aktive_dager_fp,
              CASE
-               WHEN `Ny i desember` THEN 'Nye brukere'
-               WHEN IFNULL(aktive_dager, 0) > 0 AND IFNULL(`Aktive dager i des`, 0) > 0 THEN 'tilbakevendende'
-               WHEN IFNULL(aktive_dager, 0) > 0 AND NOT IFNULL(`Aktive dager i des`, 0) > 0 THEN 'mistede'
-               WHEN NOT IFNULL(aktive_dager, 0) > 0 AND IFNULL(`Aktive dager i des`, 0) > 0 THEN 'reaktiverte'
-             END `Brukstype des`,
+               WHEN ny_bruker_fp THEN 'nye brukere'
+               WHEN IFNULL(aktive_dager_ffp, 0) > 0 AND IFNULL(aktive_dager_fp, 0) > 0 THEN 'tilbakevendende'
+               WHEN IFNULL(aktive_dager_ffp, 0) > 0 AND NOT IFNULL(aktive_dager_fp, 0) > 0 THEN 'mistede'
+               WHEN NOT IFNULL(aktive_dager_ffp, 0) > 0 AND IFNULL(aktive_dager_fp, 0) > 0 THEN 'reaktiverte'
+               ELSE 'dvale'
+             END Brukstype_fp,
              CASE
-               WHEN `Ny i januar` THEN 'Nye brukere'
-               WHEN IFNULL(`Aktive dager i des`, 0) > 0 AND IFNULL(`Aktive dager i jan`, 0) > 0 THEN 'tilbakevendende'
-               WHEN IFNULL(`Aktive dager i des`, 0) > 0 AND NOT IFNULL(`Aktive dager i jan`, 0) > 0 THEN 'mistede'
-               WHEN NOT IFNULL(`Aktive dager i des`, 0) > 0 AND IFNULL(`Aktive dager i jan`, 0) > 0 THEN 'reaktiverte'
-             END `Brukstype jan`,
+               WHEN ny_bruker THEN 'nye brukere'
+               WHEN IFNULL(aktive_dager_fp, 0) > 0 AND IFNULL(aktive_dager, 0) > 0 THEN 'tilbakevendende'
+               WHEN IFNULL(aktive_dager_fp, 0) > 0 AND NOT IFNULL(aktive_dager, 0) > 0 THEN 'mistede'
+               WHEN NOT IFNULL(aktive_dager_fp, 0) > 0 AND IFNULL(aktive_dager, 0) > 0 THEN 'reaktiverte'
+               ELSE 'dvale'
+             END Brukstype,
              COUNT(nrkUserId) brukere
         FROM FORRIGE_PERIODE28
        GROUP BY ALL)
