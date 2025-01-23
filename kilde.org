@@ -196,68 +196,193 @@ WITH
   SELECT * FROM AGG)
 #+end_src
 
+** Oversikt over utgravingsområdet
+La oss se hvordan hvordan kombinasjoner av brukstype siste og nest siste periode ser ut.
+
+#+begin_src bigquery
+  #standardSQL
+  WITH
+    A AS (
+      SELECT dato, Brukstype_fp, Brukstype, SUM(brukere) Brukere
+        FROM `nrk-scratchbook.Emil.TLGtall_tot`
+       GROUP BY ALL)
+
+    SELECT *
+      FROM A
+     WHERE dato = '2024-12-25'
+     ORDER BY 1, 2
+#+end_src
+
+#+RESULTS:
+|       dato | Brukstype_fp    | Brukstype       | Brukere |
+|------------+-----------------+-----------------+---------|
+| 2024-12-25 | dvale           | reaktiverte     |  132385 |
+| 2024-12-25 | dvale           | nye brukere     |   41071 |
+| 2024-12-25 | dvale           | dvale           |   18501 |
+| 2024-12-25 | mistede         | reaktiverte     |   85071 |
+| 2024-12-25 | mistede         | dvale           |  103604 |
+| 2024-12-25 | nye brukere     | reaktiverte     |     128 |
+| 2024-12-25 | nye brukere     | dvale           |      11 |
+| 2024-12-25 | nye brukere     | tilbakevendende |   35212 |
+| 2024-12-25 | nye brukere     | mistede         |   14965 |
+| 2024-12-25 | reaktiverte     | tilbakevendende |  193173 |
+| 2024-12-25 | reaktiverte     | mistede         |   93507 |
+| 2024-12-25 | tilbakevendende | tilbakevendende | 1574456 |
+| 2024-12-25 | tilbakevendende | mistede         |  106886 |
+
+Hva betyr disse?
+- dvale :: betyr at brukeren ikke har besøkt NRK siste eller nest siste periode.
+- mistede :: er brukere som besøkte NRK nest site periode, men ikke siste periode.
+- nye brukere :: er brukere som har registrert seg siste periode.
+- reaktiverte :: er brukere som ikke besøkte NRK nest siste periode, men besøkte oss siste periode.
+- tilbakevendende :: er brukere som besøkte oss både nest siste og siste periode.
+
+Vi er her interessert i å finne ut om flere brukere besøker NRK i desember og ikke kommer tilbake i januar enn andre måneder. Vi er dermed ute etter brukere som ble reaktivert eller opprettet i desember og mistet i januar. Så vi finner også snittet for fireukersperiodene vi har data for.
+
+
 ** Det første jordlaget
-Vi begynner med å se på hvor stor andel av brukerne som bare har besøkt NRK i desember.
+Vi begynner med å se på hvor stor andel av brukerne som bare har besøkt NRK i desember, og sammenligner med de andre månedene.
+#+name: spørring
 #+begin_src bigquery
   #standardSQL
   WITH
     GL AS (
-      SELECT userOrProfile, 
+      SELECT userOrProfile, dato, 
              SUM(IF((Brukstype_fp = 'reaktiverte' OR Brukstype_fp = 'Nye brukere')
-  		  AND (Brukstype = 'mistede' OR Brukstype = 'dvale'), brukere, 0)) `Kommer og drar i des`,
-             SUM(IF(Brukstype_fp != 'dvale' OR Brukstype_fp != 'mistede', brukere, 0)) `Tot brukere i desember`,
+  		  AND (Brukstype = 'mistede'), brukere, 0)) `Kommer og drar`,
+             SUM(IF(Brukstype_fp != 'dvale' OR Brukstype_fp != 'mistede', brukere, 0)) `Tot brukere`,
         FROM `nrk-scratchbook.Emil.TLGtall_tot`
-       WHERE dato = '2025-01-22'
-       GROUP BY ALL)
+       GROUP BY ALL),
 
-    SELECT *, ROUND(`Kommer og drar i des` / `Tot brukere i desember`, 3) `Andel som kommer og drar i desemer`
-    FROM GL
-    ORDER BY 1, 2
+    UR AS (
+    SELECT CONCAT(FORMAT_DATE('%d. %h', LAG(dato) OVER(PARTITION BY userOrProfile ORDER BY dato)), ' - ', FORMAT_DATE('%d. %h', dato)) periode,
+           *,
+           ROUND(`Kommer og drar` / `Tot brukere`, 3) Andel
+      FROM GL)
+    
+    SELECT * EXCEPT(dato)
+      FROM UR
+     WHERE periode IS NOT NULL
+     ORDER BY 2, dato
 #+end_src
 
 #+RESULTS:
-| userOrProfile | Kommer og drar i des | Tot brukere i desember | Andel som kommer og drar i desemer |
-|---------------+----------------------+------------------------+------------------------------------|
-| profile       |                25796 |                 521774 |                              0.049 |
-| user          |                58829 |                2821716 |                              0.021 |
+| periode           | userOrProfile | Kommer og drar | Tot brukere | Andel |
+|-------------------+---------------+----------------+-------------+-------|
+| 21. Feb - 20. Mar | profile       |          39438 |      278266 | 0.142 |
+| 20. Mar - 17. Apr | profile       |          15730 |      276197 | 0.057 |
+| 17. Apr - 15. May | profile       |          20099 |      286206 |  0.07 |
+| 15. May - 12. Jun | profile       |          18263 |      290490 | 0.063 |
+| 12. Jun - 10. Jul | profile       |          17408 |      297023 | 0.059 |
+| 10. Jul - 07. Aug | profile       |          21186 |      306837 | 0.069 |
+| 07. Aug - 04. Sep | profile       |          19766 |      310145 | 0.064 |
+| 04. Sep - 02. Oct | profile       |          18065 |      312503 | 0.058 |
+| 02. Oct - 30. Oct | profile       |          19462 |      314223 | 0.062 |
+| 30. Oct - 27. Nov | profile       |          18967 |      320044 | 0.059 |
+| 27. Nov - 25. Dec | profile       |          16936 |      335046 | 0.051 |
+| 25. Dec - 22. Jan | profile       |          25796 |      340758 | 0.076 |
+| 21. Feb - 20. Mar | user          |         233757 |     1967311 | 0.119 |
+| 20. Mar - 17. Apr | user          |          52954 |     1948484 | 0.027 |
+| 17. Apr - 15. May | user          |          83337 |     1861072 | 0.045 |
+| 15. May - 12. Jun | user          |          64884 |     1840673 | 0.035 |
+| 12. Jun - 10. Jul | user          |          62423 |     1858375 | 0.034 |
+| 10. Jul - 07. Aug | user          |          78821 |     1879254 | 0.042 |
+| 07. Aug - 04. Sep | user          |          67326 |     1883778 | 0.036 |
+| 04. Sep - 02. Oct | user          |          62652 |     1904227 | 0.033 |
+| 02. Oct - 30. Oct | user          |          66746 |     1920590 | 0.035 |
+| 30. Oct - 27. Nov | user          |          58076 |     2020891 | 0.029 |
+| 27. Nov - 25. Dec | user          |          76571 |     2063924 | 0.037 |
+| 25. Dec - 22. Jan | user          |          58829 |     2106197 | 0.028 |
 
-Det er bare 4,9 % av barneprofilene og 2,1 % av voksenprofilene som kommer til oss og forlater oss i desember.
+#+begin_src python
+  import pandas as pd
+  import matplotlib.pyplot as plt
+  import numpy as np
+  import pandas_gbq
+#+end_src
+
+#+begin_src python :exports none :noweb yes
+  spørring = """
+  <<spørring>>
+  """
+#+end_src
+
+#+begin_src python
+  df = pandas_gbq.read_gbq(spørring, dialect = "standard")
+  df.periode = df.periode.str.replace("-", "-\n")
+#+end_src
+
+#+begin_src python :results graphics file :file figurer/profiler.png
+  fig,ax = plt.subplots(figsize = (11,7))
+  ax.plot(df.loc[df.userOrProfile=="profile"].periode,df.loc[df.userOrProfile=="profile"].Andel,label="profile")
+  ax.plot(df.loc[df.userOrProfile=="user"].periode,df.loc[df.userOrProfile=="user"].Andel,label="user")
+  ax.legend()
+  ax.set_title("Andel brukere kommer og går i samme periode")
+  ax.set_xlabel("Periode")
+  ax.set_ylabel("Andel")
+  fig
+#+end_src
+
+#+RESULTS:
+[[file:figurer/profiler.png]]
+
+Det er bare 7,6 % av barneprofilene og 2,8 % av voksenprofilene som kommer til oss og forlater oss i desember.
 
 *** Lojalitet
 Hvordan ser dette ut per lojalitetsgruppe? Blanke verdier er brukere som ikke har fått noen gruppe ennå.
-
+#+name: spørring2
 #+begin_src bigquery
   #standardSQL
   WITH
     GL AS (
-      SELECT userOrProfile, loyaltyGroup_fp lojalitet,
+      SELECT userOrProfile, dato, loyaltyGroup_fp lojalitet,
              SUM(IF((Brukstype_fp = 'reaktiverte' OR Brukstype_fp = 'Nye brukere')
-  		  AND (Brukstype = 'mistede' OR Brukstype = 'dvale'), brukere, 0)) `Kommer og drar i des`,
-             SUM(IF(Brukstype_fp != 'dvale' OR Brukstype_fp != 'mistede', brukere, 0)) `Tot brukere i desember`,
+  		  AND (Brukstype = 'mistede'), brukere, 0)) `Kommer og drar`,
+             SUM(IF(Brukstype_fp != 'dvale' OR Brukstype_fp != 'mistede', brukere, 0)) `Tot brukere`,
         FROM `nrk-scratchbook.Emil.TLGtall_tot`
-       WHERE dato = '2025-01-22'
-       GROUP BY ALL)
+       GROUP BY ALL),
 
-    SELECT *, ROUND(`Kommer og drar i des` / `Tot brukere i desember`, 3) `Andel som kommer og drar i desemer`
-    FROM GL
-    ORDER BY 1, 2
+    UR AS (
+    SELECT CONCAT(FORMAT_DATE('%d. %h', LAG(dato) OVER(PARTITION BY userOrProfile, lojalitet ORDER BY dato)), ' - ', FORMAT_DATE('%d. %h', dato)) periode,
+           *,
+           ROUND(`Kommer og drar` / `Tot brukere`, 3) Andel
+      FROM GL)
+    
+    SELECT * EXCEPT(dato)
+      FROM UR
+     WHERE periode IS NOT NULL
+     ORDER BY 2, dato, 3
 #+end_src
 
-#+RESULTS:
-| userOrProfile | lojalitet       | Kommer og drar i des | Tot brukere i desember | Andel som kommer og drar i desemer |
-|---------------+-----------------+----------------------+------------------------+------------------------------------|
-| profile       |                 |                    0 |                 186724 |                                0.0 |
-| profile       | Fan             |                   26 |                  64762 |                                0.0 |
-| profile       | Fast Følge      |                  423 |                  46602 |                              0.009 |
-| profile       | Langdistanse    |                 1666 |                  54719 |                               0.03 |
-| profile       | One-Night-Stand |                 5546 |                  56246 |                              0.099 |
-| profile       | Slår opp        |                18135 |                 112721 |                              0.161 |
-| user          |                 |                    0 |                 757790 |                                0.0 |
-| user          | Fan             |                   51 |                 733191 |                                0.0 |
-| user          | Fast Følge      |                  688 |                 289372 |                              0.002 |
-| user          | Langdistanse    |                 2762 |                 289489 |                               0.01 |
-| user          | One-Night-Stand |                10113 |                 257729 |                              0.039 |
-| user          | Slår opp        |                45215 |                 494145 |                              0.092 |
+#+begin_src python :exports none :noweb yes
+  spørring = """
+  <<spørring2>>
+  """
+#+end_src
+
+#+begin_src python
+  df = pandas_gbq.read_gbq(spørring, dialect = "standard")
+  df.periode = df.periode.str.replace("-", "-\n")
+  df = df.loc[~df.lojalitet.isna()]
+#+end_src
+
+#+begin_src python :results graphics file :file figurer/profiler.png
+  fig,ax = plt.subplots(figsize = (11,7))
+  for p, l in zip(df.userOrProfile, df.lojalitet):
+      print(p+": "+l)
+
+
+      
+      ax.plot(df.loc[(df.userOrProfile==p) & (df.lojalitet==l)].periode,
+              df.loc[(df.userOrProfile==p) & (df.lojalitet==l)].Andel,label=p+": "+l)
+  ax.plot(df.loc[df.userOrProfile=="profile"].periode,df.loc[df.userOrProfile=="profile"].Andel,label="profile")
+  ax.plot(df.loc[df.userOrProfile=="user"].periode,df.loc[df.userOrProfile=="user"].Andel,label="user")
+  ax.legend()
+  ax.set_title("Andel brukere kommer og går i samme periode")
+  ax.set_xlabel("Periode")
+  ax.set_ylabel("Andel")
+  fig
+#+end_src
 
 Ikke overraskende er det flest antall brukerne som er minst lojale som kommer og går i desember. Det er også blant disse brukerne andelen som kommer og går i desember er størst.
 
@@ -293,31 +418,31 @@ Nå skal vi gjøre samme øvelse for voksenprofiler fordelt på alder
   #standardSQL
   WITH
     GL AS (
-      SELECT aldersgruppe, 
+      SELECT dato, aldersgruppe, 
              SUM(IF((Brukstype_fp = 'reaktiverte' OR Brukstype_fp = 'Nye brukere')
   		  AND (Brukstype = 'mistede' OR Brukstype = 'dvale'), brukere, 0)) `Kommer og drar i des`,
              SUM(IF(Brukstype_fp != 'dvale' OR Brukstype_fp != 'mistede', brukere, 0)) `Tot brukere i desember`,
         FROM `nrk-scratchbook.Emil.TLGtall_tot`
-       WHERE dato = '2025-01-22'
-         AND userOrProfile = 'user'
-         AND (aldersgruppe != '-1' OR aldersgruppe IS NULL)
+       WHERE userOrProfile = 'user'
        GROUP BY ALL)
 
     SELECT *, ROUND(`Kommer og drar i des` / `Tot brukere i desember`, 3) `Andel som kommer og drar i desemer`
-    FROM GL
-    ORDER BY 1
+      FROM GL
+     WHERE dato = '2025-01-22'
+       AND (aldersgruppe != '-1' OR aldersgruppe IS NULL)
+     ORDER BY 2
 #+end_src
 
 
 #+RESULTS:
-| aldersgruppe | Kommer og drar i des | Tot brukere i desember | Andel som kommer og drar i desemer |
-|--------------+----------------------+------------------------+------------------------------------|
-|              |                15013 |                 899663 |                              0.017 |
-|         0-12 |                 3100 |                  94874 |                              0.033 |
-|        13-19 |                 5695 |                 186549 |                              0.031 |
-|        20-29 |                 7985 |                 305689 |                              0.026 |
-|        30-49 |                11221 |                 528023 |                              0.021 |
-|        50-69 |                10310 |                 547831 |                              0.019 |
-|          70+ |                 5505 |                 259087 |                              0.021 |
+|       dato | aldersgruppe | Kommer og drar i des | Tot brukere i desember | Andel som kommer og drar i desemer |
+|------------+--------------+----------------------+------------------------+------------------------------------|
+| 2025-01-22 |              |                15013 |                 771463 |                              0.019 |
+| 2025-01-22 |         0-12 |                 3100 |                  43738 |                              0.071 |
+| 2025-01-22 |        13-19 |                 5695 |                  98970 |                              0.058 |
+| 2025-01-22 |        20-29 |                 7985 |                 195815 |                              0.041 |
+| 2025-01-22 |        30-49 |                11221 |                 394422 |                              0.028 |
+| 2025-01-22 |        50-69 |                10310 |                 416116 |                              0.025 |
+| 2025-01-22 |          70+ |                 5505 |                 185673 |                               0.03 |
 
 *** 
