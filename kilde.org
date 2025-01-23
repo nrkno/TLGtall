@@ -71,7 +71,7 @@ Vi går videre med å bryte ned brukerne på profiltype, aldersgruppe, tjeneste 
                WHEN last28Days.daysVisited < 29 THEN 28
              END aktive_dager,
         FROM `nrk-datahub.snowplow_aggregate.total_rfv`
-             LEFT JOIN `nrk-datahub.prod.registered_users_v01` USING(nrkUserId)
+             JOIN `nrk-datahub.prod.registered_users_v01` USING(nrkUserId)
        WHERE partitionDate IN UNNEST(GENERATE_DATE_ARRAY('2025-01-22' - 28*12, '2025-01-22', INTERVAL 28 day))
        ORDER BY nrkUserId, dato
     ),
