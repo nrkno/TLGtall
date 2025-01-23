@@ -2,6 +2,7 @@
 #+AUTHOR: Elise og Emil
 #+DATE: 22. januar 2025
 #+PROPERTY: header-args:bigquery :eval never-export :exports both
+#+PROPERTY: header-args:python :session *Python* :results silent :eval never-export :exports both
 #+EXPORT_FILE_NAME: readme.org
 
 #+begin_src emacs-lisp :exports results :results none
