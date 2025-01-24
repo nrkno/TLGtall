@@ -61,7 +61,6 @@ Vi går videre med å bryte ned brukerne på profiltype, aldersgruppe, tjeneste 
                  WHEN EXTRACT(YEAR FROM partitionDate) - birthYear < 70 THEN '50-69'
                  ELSE '70+'
                END) aldersgruppe,
-             DATE(registered) >= partitionDate - 28 AND DATE(registered) < partitionDate ny_bruker,
              CASE
                WHEN last28Days.daysVisited = 0 THEN 0
                WHEN last28Days.daysVisited < 4 THEN 3
@@ -74,126 +73,104 @@ Vi går videre med å bryte ned brukerne på profiltype, aldersgruppe, tjeneste 
         FROM `nrk-datahub.snowplow_aggregate.total_rfv`
              JOIN `nrk-datahub.prod.registered_users_v01` USING(nrkUserId)
        WHERE partitionDate IN UNNEST(GENERATE_DATE_ARRAY('2025-01-22' - 28*12, '2025-01-22', INTERVAL 28 day))
-       ORDER BY nrkUserId, dato
-    ),
+       ORDER BY nrkUserId, dato),
 
     FORRIGE_PERIODE28 AS (
-    SELECT sa.*,
-           sa_fp.loyaltyGroup loyaltyGroup_fp, sa_fp.aktive_dager aktive_dager_fp, sa_fp.ny_bruker ny_bruker_fp,
-           sa_ffp.loyaltyGroup loyaltyGroup_ffp, sa_ffp.aktive_dager aktive_dager_ffp,-- sa_ffp.ny_bruker ny_bruker_ffp
-      FROM SOURCE_ALL sa
-           LEFT JOIN SOURCE_ALL sa_fp ON sa.dato = sa_fp.dato + 28 AND sa.nrkUserId = sa_fp.nrkUserId
-           LEFT JOIN SOURCE_ALL sa_ffp ON sa.dato = sa_ffp.dato + 28 * 2 AND sa.nrkUserId = sa_ffp.nrkUserId),
-
-    AGG AS (
-      SELECT dato, userOrProfile, aldersgruppe, 
-             loyaltyGroup,
-             loyaltyGroup_fp,
-             aktive_dager,
-             aktive_dager_fp,
-             CASE
-               WHEN ny_bruker_fp THEN 'nye brukere'
-               WHEN IFNULL(aktive_dager_ffp, 0) > 0 AND IFNULL(aktive_dager_fp, 0) > 0 THEN 'tilbakevendende'
-               WHEN IFNULL(aktive_dager_ffp, 0) > 0 AND NOT IFNULL(aktive_dager_fp, 0) > 0 THEN 'mistede'
-               WHEN NOT IFNULL(aktive_dager_ffp, 0) > 0 AND IFNULL(aktive_dager_fp, 0) > 0 THEN 'reaktiverte'
-               ELSE 'dvale'
-             END Brukstype_fp,
-             CASE
-               WHEN ny_bruker THEN 'nye brukere'
-               WHEN IFNULL(aktive_dager_fp, 0) > 0 AND IFNULL(aktive_dager, 0) > 0 THEN 'tilbakevendende'
-               WHEN IFNULL(aktive_dager_fp, 0) > 0 AND NOT IFNULL(aktive_dager, 0) > 0 THEN 'mistede'
-               WHEN NOT IFNULL(aktive_dager_fp, 0) > 0 AND IFNULL(aktive_dager, 0) > 0 THEN 'reaktiverte'
-               ELSE 'dvale'
-             END Brukstype,
-             COUNT(nrkUserId) brukere
-        FROM FORRIGE_PERIODE28
-       GROUP BY ALL)
-
-    SELECT *
-      FROM AGG)
+      SELECT sa.*,
+             sa_fp.loyaltyGroup loyaltyGroup_fp, sa_fp.aktive_dager aktive_dager_fp,
+             sa_ffp.loyaltyGroup loyaltyGroup_ffp, sa_ffp.aktive_dager aktive_dager_ffp,
+        FROM SOURCE_ALL sa
+             LEFT JOIN SOURCE_ALL sa_fp ON sa.dato = sa_fp.dato + 28 AND sa.nrkUserId = sa_fp.nrkUserId
+             LEFT JOIN SOURCE_ALL sa_ffp ON sa.dato = sa_ffp.dato + 28 * 2 AND sa.nrkUserId = sa_ffp.nrkUserId)
+      
+    SELECT dato, userOrProfile, aldersgruppe, 
+           loyaltyGroup,
+           loyaltyGroup_fp,
+           aktive_dager,
+           aktive_dager_fp,
+           CASE
+             WHEN IFNULL(aktive_dager_ffp, 0) > 0 AND IFNULL(aktive_dager_fp, 0) > 0 THEN 'tilbakevendende'
+             WHEN IFNULL(aktive_dager_ffp, 0) > 0 AND NOT IFNULL(aktive_dager_fp, 0) > 0 THEN 'mistede'
+             WHEN NOT IFNULL(aktive_dager_ffp, 0) > 0 AND IFNULL(aktive_dager_fp, 0) > 0 THEN 'reaktiverte'
+             ELSE 'dvale'
+           END Brukstype_fp,
+           CASE
+             WHEN IFNULL(aktive_dager_fp, 0) > 0 AND IFNULL(aktive_dager, 0) > 0 THEN 'tilbakevendende'
+             WHEN IFNULL(aktive_dager_fp, 0) > 0 AND NOT IFNULL(aktive_dager, 0) > 0 THEN 'mistede'
+             WHEN NOT IFNULL(aktive_dager_fp, 0) > 0 AND IFNULL(aktive_dager, 0) > 0 THEN 'reaktiverte'
+             ELSE 'dvale'
+           END Brukstype,
+           COUNT(nrkUserId) brukere
+      FROM FORRIGE_PERIODE28
+     GROUP BY ALL)
 #+end_src
 
 Denne spørringen gir samme resultat som over, men fordeler bruken på tjenestene NRK.no, NRK Radio, NRK TV og NRK Super.
 #+begin_src bigquery :results silent
-CREATE OR REPLACE TABLE `nrk-scratchbook.Emil.TLGtall` AS (
+  #standardSQL
+  CREATE OR REPLACE TABLE `nrk-scratchbook.Emil.TLGtall` AS (
+  WITH
+    SOURCE_ALL AS (
+      SELECT partitionDate dato, nrkUserId, nrkService, userOrProfile, loyaltyGroup.groupName loyaltyGroup,
+              IF(userOrProfile != 'user',
+                CASE
+                  WHEN EXTRACT(YEAR FROM partitionDate) - birthYear IS NULL THEN NULL
+                  WHEN EXTRACT(YEAR FROM partitionDate) - birthYear < 13 THEN CAST(EXTRACT(YEAR FROM partitionDate) - birthYear AS STRING)
+                  ELSE '13'
+                END,
+                CASE
+                  WHEN EXTRACT(YEAR FROM partitionDate) - birthYear IS NULL THEN NULL
+                  WHEN EXTRACT(YEAR FROM partitionDate) - birthYear < 0 THEN '-1'
+                  WHEN EXTRACT(YEAR FROM partitionDate) - birthYear < 13 THEN '0-12'
+                  WHEN EXTRACT(YEAR FROM partitionDate) - birthYear < 20 THEN '13-19'
+                  WHEN EXTRACT(YEAR FROM partitionDate) - birthYear < 30 THEN '20-29'
+                  WHEN EXTRACT(YEAR FROM partitionDate) - birthYear < 50 THEN '30-49'
+                  WHEN EXTRACT(YEAR FROM partitionDate) - birthYear < 70 THEN '50-69'
+                  ELSE '70+'
+                END) aldersgruppe,
+              CASE
+                WHEN last28Days.daysVisited = 0 THEN 0
+                WHEN last28Days.daysVisited < 4 THEN 3
+                WHEN last28Days.daysVisited < 7 THEN 6
+                WHEN last28Days.daysVisited < 11 THEN 10
+                WHEN last28Days.daysVisited < 16 THEN 15
+                WHEN last28Days.daysVisited < 22 THEN 21
+                WHEN last28Days.daysVisited < 29 THEN 28
+              END aktive_dager,
+        FROM `nrk-datahub.snowplow_aggregate.rfv_v01`
+              JOIN `nrk-datahub.prod.registered_users_v01` USING(nrkUserId)
+        WHERE partitionDate IN UNNEST(GENERATE_DATE_ARRAY('2025-01-22' - 28*12, '2025-01-22', INTERVAL 28 day))
+          AND nrkService IN ('nrkno', 'nrkradio', 'nrktv', 'nrksuper')
+        ORDER BY nrkUserId, dato),
 
-WITH
-  ALL_DATES_AND_USERS AS (
-    SELECT partitionDate, nrkUserId, nrkService
-      FROM UNNEST(GENERATE_DATE_ARRAY('2024-11-27', '2025-01-22', INTERVAL 28 day)) partitionDate
-           CROSS JOIN (SELECT nrkUserId FROM `nrk-datahub.prod.registered_users_v01`)
-           CROSS JOIN UNNEST(['nrkno', 'nrkradio', 'nrksuper', 'nrktv']) nrkService
-  ),
-
-  SOURCE_ALL AS (
-    SELECT partitionDate dato, nrkUserId, userOrProfile, loyaltyGroup.groupName loyaltyGroup, nrkService,
-           IF(userOrProfile != 'user',
-             CASE
-               WHEN EXTRACT(YEAR FROM partitionDate) - birthYear IS NULL THEN NULL
-               WHEN EXTRACT(YEAR FROM partitionDate) - birthYear < 13 THEN CAST(EXTRACT(YEAR FROM partitionDate) - birthYear AS STRING)
-               ELSE '13'
-             END,
-             CASE
-               WHEN EXTRACT(YEAR FROM partitionDate) - birthYear IS NULL THEN NULL
-               WHEN EXTRACT(YEAR FROM partitionDate) - birthYear < 0 THEN '-1'
-               WHEN EXTRACT(YEAR FROM partitionDate) - birthYear < 13 THEN '0-12'
-               WHEN EXTRACT(YEAR FROM partitionDate) - birthYear < 20 THEN '13-19'
-               WHEN EXTRACT(YEAR FROM partitionDate) - birthYear < 30 THEN '20-29'
-               WHEN EXTRACT(YEAR FROM partitionDate) - birthYear < 50 THEN '30-49'
-               WHEN EXTRACT(YEAR FROM partitionDate) - birthYear < 70 THEN '50-69'
-               ELSE '70+'
-             END) aldersgruppe,
-           DATE(registered) >= partitionDate - 28 AND DATE(registered) < partitionDate ny_bruker,
-           CASE
-             WHEN last28Days.daysVisited = 0 THEN 0
-             WHEN last28Days.daysVisited < 4 THEN 3
-             WHEN last28Days.daysVisited < 7 THEN 6
-             WHEN last28Days.daysVisited < 11 THEN 10
-             WHEN last28Days.daysVisited < 16 THEN 15
-             WHEN last28Days.daysVisited < 22 THEN 21
-             WHEN last28Days.daysVisited < 29 THEN 28
-           END aktive_dager,
-      FROM ALL_DATES_AND_USERS
-           LEFT JOIN `nrk-datahub.prod.registered_users_v01` USING(nrkUserId)
-           LEFT JOIN `nrk-datahub.snowplow_aggregate.rfv_v01` USING(partitionDate, nrkUserId, nrkService)
-     WHERE partitionDate IN ('2024-11-27', '2024-12-25', '2025-01-22')
-     ORDER BY nrkUserId, dato
-  ),
-
-  FORRIGE_PERIODE28 AS (
-    SELECT nov.*,
-           des.loyaltyGroup lojalitet_des, des.ny_bruker `Ny i desember`, des.aktive_dager `Aktive dager i des`,
-           jan.loyaltyGroup lojalitet_jan, jan.ny_bruker `Ny i januar`, jan.aktive_dager `Aktive dager i jan`
-      FROM (SELECT * FROM SOURCE_ALL WHERE dato = '2024-11-27') nov
-           LEFT JOIN (SELECT * FROM SOURCE_ALL WHERE dato = '2024-12-25') des USING(nrkUserId)
-           LEFT JOIN (SELECT * FROM SOURCE_ALL WHERE dato = '2025-01-22') jan USING(nrkUserId)
-  ),
-
-  AGG AS (
+    FORRIGE_PERIODE28 AS (
+      SELECT sa.*,
+             sa_fp.loyaltyGroup loyaltyGroup_fp, sa_fp.aktive_dager aktive_dager_fp, --sa_fp.ny_bruker ny_bruker_fp,
+             sa_ffp.loyaltyGroup loyaltyGroup_ffp, sa_ffp.aktive_dager aktive_dager_ffp,-- sa_ffp.ny_bruker ny_bruker_ffp
+        FROM SOURCE_ALL sa
+             LEFT JOIN SOURCE_ALL sa_fp ON sa.dato = sa_fp.dato + 28 AND sa.nrkUserId = sa_fp.nrkUserId AND sa.nrkService = sa_fp.nrkService
+             LEFT JOIN SOURCE_ALL sa_ffp ON sa.dato = sa_ffp.dato + 28 * 2 AND sa.nrkUserId = sa_ffp.nrkUserId AND sa.nrkService = sa_ffp.nrkService)
+      
     SELECT dato, userOrProfile, aldersgruppe, nrkService,
-           loyaltyGroup lojalitet_nov,
-           lojalitet_des,
-           lojalitet_jan, 
-           IFNULL(aktive_dager, 0) `Aktive dager i nov`, 
-           IFNULL(`Aktive dager i des`, 0) `Aktive dager i des`,
-           IFNULL(`Aktive dager i jan`, 0) `Aktive dager i jan`,
+           loyaltyGroup,
+           loyaltyGroup_fp,
+           aktive_dager,
+           aktive_dager_fp,
            CASE
-             WHEN `Ny i desember` THEN 'Nye brukere'
-             WHEN IFNULL(aktive_dager, 0) > 0 AND IFNULL(`Aktive dager i des`, 0) > 0 THEN 'tilbakevendende'
-             WHEN IFNULL(aktive_dager, 0) > 0 AND NOT IFNULL(`Aktive dager i des`, 0) > 0 THEN 'mistede'
-             WHEN NOT IFNULL(aktive_dager, 0) > 0 AND IFNULL(`Aktive dager i des`, 0) > 0 THEN 'reaktiverte'
-           END `Brukstype des`,
+             WHEN IFNULL(aktive_dager_ffp, 0) > 0 AND IFNULL(aktive_dager_fp, 0) > 0 THEN 'tilbakevendende'
+             WHEN IFNULL(aktive_dager_ffp, 0) > 0 AND NOT IFNULL(aktive_dager_fp, 0) > 0 THEN 'mistede'
+             WHEN NOT IFNULL(aktive_dager_ffp, 0) > 0 AND IFNULL(aktive_dager_fp, 0) > 0 THEN 'reaktiverte'
+             ELSE 'dvale'
+           END Brukstype_fp,
            CASE
-             WHEN `Ny i januar` THEN 'Nye brukere'
-             WHEN IFNULL(`Aktive dager i des`, 0) > 0 AND IFNULL(`Aktive dager i jan`, 0) > 0 THEN 'tilbakevendende'
-             WHEN IFNULL(`Aktive dager i des`, 0) > 0 AND NOT IFNULL(`Aktive dager i jan`, 0) > 0 THEN 'mistede'
-             WHEN NOT IFNULL(`Aktive dager i des`, 0) > 0 AND IFNULL(`Aktive dager i jan`, 0) > 0 THEN 'reaktiverte'
-           END `Brukstype jan`,
+             WHEN IFNULL(aktive_dager_fp, 0) > 0 AND IFNULL(aktive_dager, 0) > 0 THEN 'tilbakevendende'
+             WHEN IFNULL(aktive_dager_fp, 0) > 0 AND NOT IFNULL(aktive_dager, 0) > 0 THEN 'mistede'
+             WHEN NOT IFNULL(aktive_dager_fp, 0) > 0 AND IFNULL(aktive_dager, 0) > 0 THEN 'reaktiverte'
+             ELSE 'dvale'
+           END Brukstype,
            COUNT(nrkUserId) brukere
       FROM FORRIGE_PERIODE28
      GROUP BY ALL)
-     
-  SELECT * FROM AGG)
 #+end_src
 
 ** Oversikt over utgravingsområdet
@@ -248,7 +225,7 @@ Vi begynner med å se på hvor stor andel av brukerne som bare har besøkt NRK i
   WITH
     GL AS (
       SELECT userOrProfile, dato, 
-             SUM(IF((Brukstype_fp = 'reaktiverte' OR Brukstype_fp = 'Nye brukere')
+             SUM(IF((Brukstype_fp = 'reaktiverte' OR Brukstype_fp = 'nye brukere')
   		  AND (Brukstype = 'mistede'), brukere, 0)) `Kommer og drar`,
              SUM(IF(Brukstype_fp != 'dvale' OR Brukstype_fp != 'mistede', brukere, 0)) `Tot brukere`,
         FROM `nrk-scratchbook.Emil.TLGtall_tot`
