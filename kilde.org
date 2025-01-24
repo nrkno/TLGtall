@@ -255,8 +255,9 @@ Vi begynner med å se på hvor stor andel av brukerne som bare har besøkt NRK i
        GROUP BY ALL),
 
     UR AS (
-    SELECT CONCAT(FORMAT_DATE('%d. %h', LAG(dato) OVER(PARTITION BY userOrProfile ORDER BY dato)), ' - ', FORMAT_DATE('%d. %h', dato)) periode,
-           *,
+    SELECT CONCAT(FORMAT_DATE('%d. %h', LAG(dato, 2) OVER(PARTITION BY userOrProfile ORDER BY dato)), ' - ',
+  		FORMAT_DATE('%d. %h', LAG(dato) OVER(PARTITION BY userOrProfile ORDER BY dato))) periode,
+           ,*,
            ROUND(`Kommer og drar` / `Tot brukere`, 3) Andel
       FROM GL)
     
@@ -343,8 +344,9 @@ Hvordan ser dette ut per lojalitetsgruppe? Blanke verdier er brukere som ikke ha
        GROUP BY ALL),
 
     UR AS (
-    SELECT CONCAT(FORMAT_DATE('%d. %h', LAG(dato) OVER(PARTITION BY userOrProfile, lojalitet ORDER BY dato)), ' - ', FORMAT_DATE('%d. %h', dato)) periode,
-           *,
+    SELECT CONCAT(FORMAT_DATE('%d. %h', LAG(dato,2) OVER(PARTITION BY userOrProfile, lojalitet ORDER BY dato)), ' - ',
+  		FORMAT_DATE('%d. %h', LAG(dato) OVER(PARTITION BY userOrProfile, lojalitet ORDER BY dato))) periode,
+           ,*,
            ROUND(`Kommer og drar` / `Tot brukere`, 3) Andel
       FROM GL)
     
