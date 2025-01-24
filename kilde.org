@@ -431,35 +431,56 @@ Nå gjør vi samme øvelse per tjeneste:
 
 *** Aldersgrupper
 Nå skal vi gjøre samme øvelse for voksenprofiler fordelt på alder
+#+name: spørring3
 #+begin_src bigquery
   #standardSQL
   WITH
     GL AS (
-      SELECT dato, aldersgruppe, 
+      SELECT dato, aldersgruppe, userOrProfile,
              SUM(IF((Brukstype_fp = 'reaktiverte' OR Brukstype_fp = 'Nye brukere')
-  		  AND (Brukstype = 'mistede' OR Brukstype = 'dvale'), brukere, 0)) `Kommer og drar i des`,
-             SUM(IF(Brukstype_fp != 'dvale' OR Brukstype_fp != 'mistede', brukere, 0)) `Tot brukere i desember`,
+  		  AND (Brukstype = 'mistede'), brukere, 0)) `Kommer og drar`,
+             SUM(IF(Brukstype_fp != 'dvale' OR Brukstype_fp != 'mistede', brukere, 0)) `Tot brukere`,
         FROM `nrk-scratchbook.Emil.TLGtall_tot`
-       WHERE userOrProfile = 'user'
-       GROUP BY ALL)
+       GROUP BY ALL),
 
-    SELECT *, ROUND(`Kommer og drar i des` / `Tot brukere i desember`, 3) `Andel som kommer og drar i desemer`
-      FROM GL
-     WHERE dato = '2025-01-22'
-       AND (aldersgruppe != '-1' OR aldersgruppe IS NULL)
-     ORDER BY 2
+    UR AS (
+      SELECT CONCAT(FORMAT_DATE('%d. %h', LAG(dato, 2) OVER(PARTITION BY aldersgruppe ORDER BY dato)), ' - ',
+  		  FORMAT_DATE('%d. %h', LAG(dato) OVER(PARTITION BY aldersgruppe ORDER BY dato))) periode,
+             ,*,
+             ROUND(`Kommer og drar` / `Tot brukere`, 3) Andel
+        FROM GL
+       WHERE userOrProfile = 'user')
+    
+    SELECT * EXCEPT(dato, userOrProfile)
+      FROM UR
+     WHERE periode IS NOT NULL
+       AND NOT (aldersgruppe = '-1' OR aldersgruppe IS NULL)
+     ORDER BY 2, dato, 3
 #+end_src
 
+#+begin_src python :exports none :noweb yes
+  spørring = """
+  <<spørring3>>
+  """
+#+end_src
 
-#+RESULTS:
-|       dato | aldersgruppe | Kommer og drar i des | Tot brukere i desember | Andel som kommer og drar i desemer |
-|------------+--------------+----------------------+------------------------+------------------------------------|
-| 2025-01-22 |              |                15013 |                 771463 |                              0.019 |
-| 2025-01-22 |         0-12 |                 3100 |                  43738 |                              0.071 |
-| 2025-01-22 |        13-19 |                 5695 |                  98970 |                              0.058 |
-| 2025-01-22 |        20-29 |                 7985 |                 195815 |                              0.041 |
-| 2025-01-22 |        30-49 |                11221 |                 394422 |                              0.028 |
-| 2025-01-22 |        50-69 |                10310 |                 416116 |                              0.025 |
-| 2025-01-22 |          70+ |                 5505 |                 185673 |                               0.03 |
+#+begin_src python
+  df = pandas_gbq.read_gbq(spørring, dialect = "standard")
+  df.periode = df.periode.str.replace("-", "-\n")
+#+end_src
 
-*** 
+#+begin_src python :results graphics file :file figurer/alder.png
+  fig,ax = plt.subplots(2, 1, figsize = (11,7), layout="constrained")
+  for a in df.aldersgruppe.unique():
+      ax[0].plot(df.loc[df.aldersgruppe == a].periode, df.loc[df.aldersgruppe == a].Andel, label=a)
+      ax[1].plot(df.loc[df.aldersgruppe == a].periode, df.loc[df.aldersgruppe == a, "Kommer og drar"], label=a)
+
+  ax[0].legend(loc="upper left")
+  for i in range(2):
+      ax[i].set_title(benevning[i]+tittel)
+      ax[i].set_xlabel(x_lapp)
+      ax[i].set_ylabel(benevning[i]+y_lapp)
+  fig
+#+end_src
+
+** Hvem var brukerne som kom og dro i desember?
