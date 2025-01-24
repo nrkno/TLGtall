@@ -314,13 +314,27 @@ Vi begynner med å se på hvor stor andel av brukerne som bare har besøkt NRK i
 #+end_src
 
 #+begin_src python :results graphics file :file figurer/profiler.png
-  fig,ax = plt.subplots(figsize = (11,7))
-  ax.plot(df.loc[df.userOrProfile=="profile"].periode,df.loc[df.userOrProfile=="profile"].Andel,label="profile")
-  ax.plot(df.loc[df.userOrProfile=="user"].periode,df.loc[df.userOrProfile=="user"].Andel,label="user")
-  ax.legend()
-  ax.set_title("Andel brukere kommer og går i samme periode")
-  ax.set_xlabel("Periode")
-  ax.set_ylabel("Andel")
+  benevning = ["Andel", "Antall"]
+  tittel = " brukere som kommer og går i samme periode"
+  x_lapp = "Periode"
+  y_lapp = " brukere"
+
+  fig,ax = plt.subplots(2, 1, figsize = (11,7), layout="constrained")
+  ax[0].plot(df.loc[df.userOrProfile=="profile"].periode,
+             df.loc[df.userOrProfile=="profile"].Andel,label="profile")
+  ax[0].plot(df.loc[df.userOrProfile=="user"].periode,
+             df.loc[df.userOrProfile=="user"].Andel,label="user")
+
+  ax[1].plot(df.loc[df.userOrProfile=="profile"].periode,
+             df.loc[df.userOrProfile=="profile", "Kommer og drar"], label="profile")
+  ax[1].plot(df.loc[df.userOrProfile=="user"].periode,
+             df.loc[df.userOrProfile=="user", "Kommer og drar"], label="user")
+
+  ax[0].legend(loc="upper left")
+  for i in range(2):
+      ax[i].set_title(benevning[i]+tittel)
+      ax[i].set_xlabel(x_lapp)
+      ax[i].set_ylabel(benevning[i]+y_lapp)
   fig
 #+end_src
 
@@ -368,25 +382,26 @@ Hvordan ser dette ut per lojalitetsgruppe? Blanke verdier er brukere som ikke ha
   df = df.loc[~df.lojalitet.isna()]
 #+end_src
 
-#+begin_src python :results graphics file :file figurer/profiler.png
-  fig,ax = plt.subplots(figsize = (11,7))
-  for p, l in zip(df.userOrProfile, df.lojalitet):
-      print(p+": "+l)
+#+begin_src python :results graphics file :file figurer/profiler_og_lojalitet.png
+  fig,ax = plt.subplots(2, 1, figsize = (11,7), layout="constrained")
+  for p, l in  [[p,l] for l in df.lojalitet.unique()[::-1] for p in df.userOrProfile.unique()]:   
+      ax[0].plot(df.loc[(df.userOrProfile==p) & (df.lojalitet==l)].periode,
+                 df.loc[(df.userOrProfile==p) & (df.lojalitet==l)].Andel, label=p+": "+l)
+      ax[1].plot(df.loc[(df.userOrProfile==p) & (df.lojalitet==l)].periode,
+                 df.loc[(df.userOrProfile==p) & (df.lojalitet==l), "Kommer og drar"], label=p+": "+l)
 
+  ax[0].legend(loc="upper left")
+  for i in range(2):
+      ax[i].set_title(benevning[i]+tittel)
+      ax[i].set_xlabel(x_lapp)
+      ax[i].set_ylabel(benevning[i]+y_lapp)
 
-      
-      ax.plot(df.loc[(df.userOrProfile==p) & (df.lojalitet==l)].periode,
-              df.loc[(df.userOrProfile==p) & (df.lojalitet==l)].Andel,label=p+": "+l)
-  ax.plot(df.loc[df.userOrProfile=="profile"].periode,df.loc[df.userOrProfile=="profile"].Andel,label="profile")
-  ax.plot(df.loc[df.userOrProfile=="user"].periode,df.loc[df.userOrProfile=="user"].Andel,label="user")
-  ax.legend()
-  ax.set_title("Andel brukere kommer og går i samme periode")
-  ax.set_xlabel("Periode")
-  ax.set_ylabel("Andel")
   fig
 #+end_src
 
-Ikke overraskende er det flest antall brukerne som er minst lojale som kommer og går i desember. Det er også blant disse brukerne andelen som kommer og går i desember er størst.
+[[file:figurer/profiler_og_lojalitet.png]]
+
+Ikke overraskende er det flest antall brukerne som er minst lojale som kommer og går i desember, men dette gjelder kun barneprofilene. Blant voksenprofilene er andelen som kommer og går i desember mindre enn andre måneder. Det er også blant disse brukerne andelen som kommer og går i desember er størst.
 
 *** Tjeneste
 Nå gjør vi samme øvelse per tjeneste:
