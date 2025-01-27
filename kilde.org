@@ -373,30 +373,62 @@ Ikke overraskende er det flest antall brukerne som er minst lojale som kommer og
 
 *** Tjeneste
 Nå gjør vi samme øvelse per tjeneste:
+#+name: spørring_tjeneste
 #+begin_src bigquery
   #standardSQL
-   SELECT userOrProfile, nrkService, 
-        SUM(IF((`Brukstype des` = 'reaktiverte' OR `Brukstype des` = 'Nye brukere') AND (`Brukstype jan` = 'mistede' OR `Brukstype jan` IS NULL), brukere, 0)) `Kommer og drar i des`,
-        SUM(IF(`Brukstype des` IS NOT NULL OR `Brukstype des` != 'mistede', brukere, 0)) `Tot brukere i desember`,
-        ROUND(SUM(IF((`Brukstype des` = 'reaktiverte' OR `Brukstype des` = 'Nye brukere') AND (`Brukstype jan` = 'mistede' OR `Brukstype jan` IS NULL), brukere, 0)) / SUM(IF(`Brukstype des` IS NOT NULL OR `Brukstype des` != 'mistede', brukere, 0)), 3) andel
-   FROM `nrk-scratchbook.Emil.TLGtall`
-  --WHERE (`Brukstype jan` = 'mistede' OR `Brukstype jan` IS NULL)
-  GROUP BY ALL
-  ORDER BY 1, 2
+  WITH
+    GL AS (
+      SELECT userOrProfile, dato, nrkService tjeneste, 
+             SUM(IF(Brukstype_fp = 'reaktiverte'
+  		  AND Brukstype = 'mistede', brukere, 0)) `Kommer og drar`,
+             SUM(IF(Brukstype_fp IN ('reaktiverte', 'tilbakevendende'), brukere, 0)) `Tot brukere`,
+        FROM `nrk-scratchbook.Emil.TLGtall`
+       GROUP BY ALL),
+
+    UR AS (
+    SELECT CONCAT(FORMAT_DATE('%d. %h', LAG(dato,2) OVER(PARTITION BY userOrProfile, tjeneste ORDER BY dato)), ' - ',
+  		FORMAT_DATE('%d. %h', LAG(dato) OVER(PARTITION BY userOrProfile, tjeneste ORDER BY dato))) periode,
+           ,*,
+           ROUND(`Kommer og drar` / `Tot brukere`, 3) Andel
+      FROM GL
+     WHERE `Kommer og drar` > 0)
+    
+    SELECT * EXCEPT(dato)
+      FROM UR
+     WHERE periode IS NOT NULL
+       AND `Kommer og drar` > 1
+     ORDER BY 2, dato, 3
 #+end_src
 
-#+RESULTS:
-| userOrProfile | nrkService | Kommer og drar i des | Tot brukere i desember | andel |
-|---------------+------------+----------------------+------------------------+-------|
-| profile       | nrkno      |              1082918 |                1494980 | 0.724 |
-| profile       | nrkradio   |              1082918 |                1494980 | 0.724 |
-| profile       | nrksuper   |               552519 |                3341000 | 0.165 |
-| profile       | nrktv      |               611282 |                3080540 | 0.198 |
-| user          | nrkno      |              3203216 |               21539644 | 0.149 |
-| user          | nrkradio   |              4623324 |               17065820 | 0.271 |
-| user          | nrksuper   |              6718204 |               12596668 | 0.533 |
-| user          | nrktv      |              2312538 |               24758064 | 0.093 |
+#+begin_src python :exports none :noweb yes
+  spørring = """
+  <<spørring_tjeneste>>
+  """
+#+end_src
 
+#+begin_src python
+  df = pandas_gbq.read_gbq(spørring, dialect = "standard")
+  df.periode = df.periode.str.replace("-", "-\n")
+#+end_src
+
+#+begin_src python :results graphics file :file figurer/profiler_og_tjeneste.png
+  fig,ax = plt.subplots(2, 1, figsize = (11,7), layout="constrained")
+  for p, l in  [[p,l] for l in df.tjeneste.unique()[::-1] for p in df.userOrProfile.unique()]:   
+      ax[0].plot(df.loc[(df.userOrProfile==p) & (df.tjeneste==l)].periode,
+                 df.loc[(df.userOrProfile==p) & (df.tjeneste==l)].Andel, label=p+": "+l)
+      ax[1].plot(df.loc[(df.userOrProfile==p) & (df.tjeneste==l)].periode,
+                 df.loc[(df.userOrProfile==p) & (df.tjeneste==l), "Kommer og drar"], label=p+": "+l)
+
+  ax[0].legend(loc="upper left")
+  for i in range(2):
+      ax[i].set_title(benevning[i]+tittel)
+      ax[i].set_xlabel(x_lapp)
+      ax[i].set_ylabel(benevning[i]+y_lapp)
+
+  fig
+#+end_src
+
+[[file:figurer/profiler_og_tjeneste.png]]
 *** Aldersgrupper
 Nå skal vi gjøre samme øvelse for voksenprofiler fordelt på alder
 #+name: spørring3
