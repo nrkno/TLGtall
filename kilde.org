@@ -14,10 +14,29 @@
   (defun fjern-resultatmerke (s backend info)
     (replace-regexp-in-string "#\\+results:[ ]+" "" s))
 
+  (defun tusenskille-og-komma (s backend info)
+    "Bytt ut . med , og legg inn mellomrom som tusenskille. Fjerner også desimaler med bare 0."
+    (let ((b 0))
+      (while (string-match "\\([0-9]+\\)\\.?\\([0-9]+\\)?" s b)
+        (let ((hel (match-string 1 s))
+              (dec (if (or (string= (match-string 2 s) "0+")
+  			 (string= (match-string 1 s) (match-string 0 s)))
+  		     "" (concat "," (match-string 2 s)))))
+  	(setq b (match-end 0))
+  	(save-match-data
+  	  (while (string-match "\\([0-9]+\\)\\([0-9][0-9][0-9].*\\)" hel)
+              (setq hel (concat
+                         (match-string 1 hel) " "
+                         (match-string 2 hel)))))
+  	(setq s (replace-match (concat hel dec) t t s))))
+      s))
+
   (add-to-list 'org-export-filter-src-block-functions
     	     'bytt-bigquery-til-sql)
   (add-to-list 'org-export-filter-body-functions
     	     'fjern-resultatmerke)
+  (add-to-list 'org-export-filter-table-functions
+               'tusenskille-og-komma)
 #+end_src
 * Innledning
 Desember er NRKs -- og spesielt NRK TVs -- beste måned. Det er da alle tårer som gråtes over at TV2 engasjerer brukerne mer enn NRK gjennom høsten, tørkes, og vi kan igjen klappe oss selv på skulderen og tenke "vi gjør det tross alt jævlig bra". Men så sprøytes det kaldt vann i årene igjen i januar -- eller gjør det det? Dette skal vi komme til bunns i. Og dersom det faktisk er tilfellet at julebruken er så stor som vi tror, hvem er da disse brukerne som kommer og går i desember? Hva kjennetegner dem?
