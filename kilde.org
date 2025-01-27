@@ -65,21 +65,21 @@ Vi går videre med å bryte ned brukerne på profiltype, aldersgruppe, tjeneste 
     SOURCE_ALL AS (
       SELECT partitionDate dato, nrkUserId, userOrProfile, loyaltyGroup,
              IF(userOrProfile != 'user',
-               CASE
-                 WHEN EXTRACT(YEAR FROM partitionDate) - birthYear IS NULL THEN NULL
-                 WHEN EXTRACT(YEAR FROM partitionDate) - birthYear < 13 THEN CAST(EXTRACT(YEAR FROM partitionDate) - birthYear AS STRING)
-                 ELSE '13'
-               END,
-               CASE
-                 WHEN EXTRACT(YEAR FROM partitionDate) - birthYear IS NULL THEN NULL
-                 WHEN EXTRACT(YEAR FROM partitionDate) - birthYear < 0 THEN '-1'
-                 WHEN EXTRACT(YEAR FROM partitionDate) - birthYear < 13 THEN '0-12'
-                 WHEN EXTRACT(YEAR FROM partitionDate) - birthYear < 20 THEN '13-19'
-                 WHEN EXTRACT(YEAR FROM partitionDate) - birthYear < 30 THEN '20-29'
-                 WHEN EXTRACT(YEAR FROM partitionDate) - birthYear < 50 THEN '30-49'
-                 WHEN EXTRACT(YEAR FROM partitionDate) - birthYear < 70 THEN '50-69'
-                 ELSE '70+'
-               END) aldersgruppe,
+                CASE
+                  WHEN EXTRACT(YEAR FROM partitionDate) - birthYear IS NULL THEN NULL
+                  WHEN EXTRACT(YEAR FROM partitionDate) - birthYear < 13 THEN CAST(EXTRACT(YEAR FROM partitionDate) - birthYear AS STRING)
+                  ELSE '13'
+                END,
+                CASE
+                  WHEN EXTRACT(YEAR FROM partitionDate) - birthYear IS NULL THEN NULL
+                  WHEN EXTRACT(YEAR FROM partitionDate) - birthYear < 0 THEN '-1'
+                  WHEN EXTRACT(YEAR FROM partitionDate) - birthYear < 13 THEN '0-12'
+                  WHEN EXTRACT(YEAR FROM partitionDate) - birthYear < 20 THEN '13-19'
+                  WHEN EXTRACT(YEAR FROM partitionDate) - birthYear < 30 THEN '20-29'
+                  WHEN EXTRACT(YEAR FROM partitionDate) - birthYear < 50 THEN '30-49'
+                  WHEN EXTRACT(YEAR FROM partitionDate) - birthYear < 70 THEN '50-69'
+                  ELSE '70+'
+                END) aldersgruppe,
              CASE
                WHEN last28Days.daysVisited = 0 THEN 0
                WHEN last28Days.daysVisited < 4 THEN 3
@@ -131,7 +131,7 @@ Denne spørringen gir samme resultat som over, men fordeler bruken på tjenesten
   WITH
     SOURCE_ALL AS (
       SELECT partitionDate dato, nrkUserId, nrkService, userOrProfile, loyaltyGroup.groupName loyaltyGroup,
-              IF(userOrProfile != 'user',
+             IF(userOrProfile != 'user',
                 CASE
                   WHEN EXTRACT(YEAR FROM partitionDate) - birthYear IS NULL THEN NULL
                   WHEN EXTRACT(YEAR FROM partitionDate) - birthYear < 13 THEN CAST(EXTRACT(YEAR FROM partitionDate) - birthYear AS STRING)
@@ -147,20 +147,20 @@ Denne spørringen gir samme resultat som over, men fordeler bruken på tjenesten
                   WHEN EXTRACT(YEAR FROM partitionDate) - birthYear < 70 THEN '50-69'
                   ELSE '70+'
                 END) aldersgruppe,
-              CASE
-                WHEN last28Days.daysVisited = 0 THEN 0
-                WHEN last28Days.daysVisited < 4 THEN 3
-                WHEN last28Days.daysVisited < 7 THEN 6
-                WHEN last28Days.daysVisited < 11 THEN 10
-                WHEN last28Days.daysVisited < 16 THEN 15
-                WHEN last28Days.daysVisited < 22 THEN 21
-                WHEN last28Days.daysVisited < 29 THEN 28
-              END aktive_dager,
+             CASE
+               WHEN last28Days.daysVisited = 0 THEN 0
+               WHEN last28Days.daysVisited < 4 THEN 3
+               WHEN last28Days.daysVisited < 7 THEN 6
+               WHEN last28Days.daysVisited < 11 THEN 10
+               WHEN last28Days.daysVisited < 16 THEN 15
+               WHEN last28Days.daysVisited < 22 THEN 21
+               WHEN last28Days.daysVisited < 29 THEN 28
+             END aktive_dager,
         FROM `nrk-datahub.snowplow_aggregate.rfv_v01`
-              JOIN `nrk-datahub.prod.registered_users_v01` USING(nrkUserId)
-        WHERE partitionDate IN UNNEST(GENERATE_DATE_ARRAY('2025-01-22' - 28*12, '2025-01-22', INTERVAL 28 day))
-          AND nrkService IN ('nrkno', 'nrkradio', 'nrktv', 'nrksuper')
-        ORDER BY nrkUserId, dato),
+             JOIN `nrk-datahub.prod.registered_users_v01` USING(nrkUserId)
+       WHERE partitionDate IN UNNEST(GENERATE_DATE_ARRAY('2025-01-22' - 28*12, '2025-01-22', INTERVAL 28 day))
+         AND nrkService IN ('nrkno', 'nrkradio', 'nrktv', 'nrksuper')
+       ORDER BY nrkUserId, dato),
 
     FORRIGE_PERIODE28 AS (
       SELECT sa.*,
@@ -253,7 +253,7 @@ Vi begynner med å se på hvor stor andel av brukerne som bare har besøkt NRK i
     UR AS (
     SELECT CONCAT(FORMAT_DATE('%d. %h', LAG(dato, 2) OVER(PARTITION BY userOrProfile ORDER BY dato)), ' - ',
   		FORMAT_DATE('%d. %h', LAG(dato) OVER(PARTITION BY userOrProfile ORDER BY dato))) periode,
-           ,*,
+           *,
            ROUND(`Kommer og drar` / `Tot brukere`, 3) Andel
       FROM GL)
     
@@ -262,34 +262,6 @@ Vi begynner med å se på hvor stor andel av brukerne som bare har besøkt NRK i
      WHERE periode IS NOT NULL
      ORDER BY 2, dato
 #+end_src
-
-#+RESULTS:
-| periode           | userOrProfile | Kommer og drar | Tot brukere | Andel |
-|-------------------+---------------+----------------+-------------+-------|
-| 21. Feb - 20. Mar | profile       |          39438 |      278266 | 0.142 |
-| 20. Mar - 17. Apr | profile       |          15730 |      276197 | 0.057 |
-| 17. Apr - 15. May | profile       |          20099 |      286206 |  0.07 |
-| 15. May - 12. Jun | profile       |          18263 |      290490 | 0.063 |
-| 12. Jun - 10. Jul | profile       |          17408 |      297023 | 0.059 |
-| 10. Jul - 07. Aug | profile       |          21186 |      306837 | 0.069 |
-| 07. Aug - 04. Sep | profile       |          19766 |      310145 | 0.064 |
-| 04. Sep - 02. Oct | profile       |          18065 |      312503 | 0.058 |
-| 02. Oct - 30. Oct | profile       |          19462 |      314223 | 0.062 |
-| 30. Oct - 27. Nov | profile       |          18967 |      320044 | 0.059 |
-| 27. Nov - 25. Dec | profile       |          16936 |      335046 | 0.051 |
-| 25. Dec - 22. Jan | profile       |          25796 |      340758 | 0.076 |
-| 21. Feb - 20. Mar | user          |         233757 |     1967311 | 0.119 |
-| 20. Mar - 17. Apr | user          |          52954 |     1948484 | 0.027 |
-| 17. Apr - 15. May | user          |          83337 |     1861072 | 0.045 |
-| 15. May - 12. Jun | user          |          64884 |     1840673 | 0.035 |
-| 12. Jun - 10. Jul | user          |          62423 |     1858375 | 0.034 |
-| 10. Jul - 07. Aug | user          |          78821 |     1879254 | 0.042 |
-| 07. Aug - 04. Sep | user          |          67326 |     1883778 | 0.036 |
-| 04. Sep - 02. Oct | user          |          62652 |     1904227 | 0.033 |
-| 02. Oct - 30. Oct | user          |          66746 |     1920590 | 0.035 |
-| 30. Oct - 27. Nov | user          |          58076 |     2020891 | 0.029 |
-| 27. Nov - 25. Dec | user          |          76571 |     2063924 | 0.037 |
-| 25. Dec - 22. Jan | user          |          58829 |     2106197 | 0.028 |
 
 #+begin_src python
   import pandas as pd
@@ -347,7 +319,7 @@ Hvordan ser dette ut per lojalitetsgruppe? Blanke verdier er brukere som ikke ha
   WITH
     GL AS (
       SELECT userOrProfile, dato, loyaltyGroup_fp lojalitet,
-             SUM(IF((Brukstype_fp = 'reaktiverte' OR Brukstype_fp = 'Nye brukere')
+             SUM(IF((Brukstype_fp = 'reaktiverte' OR Brukstype_fp = 'nye brukere')
   		  AND (Brukstype = 'mistede'), brukere, 0)) `Kommer og drar`,
              SUM(IF(Brukstype_fp != 'dvale' OR Brukstype_fp != 'mistede', brukere, 0)) `Tot brukere`,
         FROM `nrk-scratchbook.Emil.TLGtall_tot`
