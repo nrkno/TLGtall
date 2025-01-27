@@ -1,8 +1,9 @@
-# Created 2025-01-22 on. 14:39
+# Created 2025-01-27 ma. 10:43
 #+title: Brukere som kommer til oss - og forlater oss - i desember
 #+date: 22. januar 2025
 #+author: Elise og Emil
 #+property: header-args:bigquery :eval never-export :exports both
+#+property: header-args:python :session *Python* :results silent :eval never-export :exports both
 #+export_file_name: readme.org
 * Innledning
 Desember er NRKs -- og spesielt NRK TVs -- beste måned. Det er da alle tårer som gråtes over at TV2 engasjerer brukerne mer enn NRK gjennom høsten, tørkes, og vi kan igjen klappe oss selv på skulderen og tenke "vi gjør det tross alt jævlig bra". Men så sprøytes det kaldt vann i årene igjen i januar -- eller gjør det det? Dette skal vi komme til bunns i. Og dersom det faktisk er tilfellet at julebruken er så stor som vi tror, hvem er da disse brukerne som kommer og går i desember? Hva kjennetegner dem?
@@ -25,31 +26,24 @@ Vi går videre med å bryte ned brukerne på profiltype, aldersgruppe, tjeneste 
   #standardSQL
   CREATE OR REPLACE TABLE `nrk-scratchbook.Emil.TLGtall_tot` AS (
   WITH
-    ALL_DATES_AND_USERS AS (
-      SELECT partitionDate, nrkUserId
-        FROM UNNEST(GENERATE_DATE_ARRAY('2024-11-27', '2025-01-22', INTERVAL 28 day)) partitionDate
-             CROSS JOIN (SELECT nrkUserId FROM `nrk-datahub.prod.registered_users_v01`)
-    ),
-
     SOURCE_ALL AS (
       SELECT partitionDate dato, nrkUserId, userOrProfile, loyaltyGroup,
              IF(userOrProfile != 'user',
-               CASE
-                 WHEN EXTRACT(YEAR FROM partitionDate) - birthYear IS NULL THEN NULL
-                 WHEN EXTRACT(YEAR FROM partitionDate) - birthYear < 13 THEN CAST(EXTRACT(YEAR FROM partitionDate) - birthYear AS STRING)
-                 ELSE '13'
-               END,
-               CASE
-                 WHEN EXTRACT(YEAR FROM partitionDate) - birthYear IS NULL THEN NULL
-                 WHEN EXTRACT(YEAR FROM partitionDate) - birthYear < 0 THEN '-1'
-                 WHEN EXTRACT(YEAR FROM partitionDate) - birthYear < 13 THEN '0-12'
-                 WHEN EXTRACT(YEAR FROM partitionDate) - birthYear < 20 THEN '13-19'
-                 WHEN EXTRACT(YEAR FROM partitionDate) - birthYear < 30 THEN '20-29'
-                 WHEN EXTRACT(YEAR FROM partitionDate) - birthYear < 50 THEN '30-49'
-                 WHEN EXTRACT(YEAR FROM partitionDate) - birthYear < 70 THEN '50-69'
-                 ELSE '70+'
-               END) aldersgruppe,
-             DATE(registered) >= partitionDate - 28 AND DATE(registered) < partitionDate ny_bruker,
+                CASE
+                  WHEN EXTRACT(YEAR FROM partitionDate) - birthYear IS NULL THEN NULL
+                  WHEN EXTRACT(YEAR FROM partitionDate) - birthYear < 13 THEN CAST(EXTRACT(YEAR FROM partitionDate) - birthYear AS STRING)
+                  ELSE '13'
+                END,
+                CASE
+                  WHEN EXTRACT(YEAR FROM partitionDate) - birthYear IS NULL THEN NULL
+                  WHEN EXTRACT(YEAR FROM partitionDate) - birthYear < 0 THEN '-1'
+                  WHEN EXTRACT(YEAR FROM partitionDate) - birthYear < 13 THEN '0-12'
+                  WHEN EXTRACT(YEAR FROM partitionDate) - birthYear < 20 THEN '13-19'
+                  WHEN EXTRACT(YEAR FROM partitionDate) - birthYear < 30 THEN '20-29'
+                  WHEN EXTRACT(YEAR FROM partitionDate) - birthYear < 50 THEN '30-49'
+                  WHEN EXTRACT(YEAR FROM partitionDate) - birthYear < 70 THEN '50-69'
+                  ELSE '70+'
+                END) aldersgruppe,
              CASE
                WHEN last28Days.daysVisited = 0 THEN 0
                WHEN last28Days.daysVisited < 4 THEN 3
@@ -59,81 +53,64 @@ Vi går videre med å bryte ned brukerne på profiltype, aldersgruppe, tjeneste 
                WHEN last28Days.daysVisited < 22 THEN 21
                WHEN last28Days.daysVisited < 29 THEN 28
              END aktive_dager,
-        FROM ALL_DATES_AND_USERS
-             LEFT JOIN `nrk-datahub.prod.registered_users_v01` USING(nrkUserId)
-             LEFT JOIN `nrk-datahub.snowplow_aggregate.total_rfv` USING(partitionDate, nrkUserId)
-       WHERE partitionDate IN ('2024-11-27', '2024-12-25', '2025-01-22')
-       ORDER BY nrkUserId, dato
-    ),
+        FROM `nrk-datahub.snowplow_aggregate.total_rfv`
+             JOIN `nrk-datahub.prod.registered_users_v01` USING(nrkUserId)
+       WHERE partitionDate IN UNNEST(GENERATE_DATE_ARRAY('2025-01-22' - 28*12, '2025-01-22', INTERVAL 28 day))
+       ORDER BY nrkUserId, dato),
 
     FORRIGE_PERIODE28 AS (
-      SELECT nov.*,
-             des.loyaltyGroup lojalitet_des, des.ny_bruker `Ny i desember`, des.aktive_dager `Aktive dager i des`,
-             jan.loyaltyGroup lojalitet_jan, jan.ny_bruker `Ny i januar`, jan.aktive_dager `Aktive dager i jan`
-        FROM (SELECT * FROM SOURCE_ALL WHERE dato = '2024-11-27') nov
-             LEFT JOIN (SELECT * FROM SOURCE_ALL WHERE dato = '2024-12-25') des USING(nrkUserId)
-             LEFT JOIN (SELECT * FROM SOURCE_ALL WHERE dato = '2025-01-22') jan USING(nrkUserId)
-    ),
+      SELECT sa.*,
+             sa_fp.loyaltyGroup loyaltyGroup_fp, sa_fp.aktive_dager aktive_dager_fp,
+             sa_ffp.loyaltyGroup loyaltyGroup_ffp, sa_ffp.aktive_dager aktive_dager_ffp,
+        FROM SOURCE_ALL sa
+             LEFT JOIN SOURCE_ALL sa_fp ON sa.dato = sa_fp.dato + 28 AND sa.nrkUserId = sa_fp.nrkUserId
+             LEFT JOIN SOURCE_ALL sa_ffp ON sa.dato = sa_ffp.dato + 28 * 2 AND sa.nrkUserId = sa_ffp.nrkUserId)
 
-    AGG AS (
-      SELECT dato, userOrProfile, aldersgruppe, 
-             loyaltyGroup lojalitet_nov,
-             lojalitet_des,
-             lojalitet_jan, 
-             IFNULL(aktive_dager, 0) `Aktive dager i nov`, 
-             IFNULL(`Aktive dager i des`, 0) `Aktive dager i des`,
-             IFNULL(`Aktive dager i jan`, 0) `Aktive dager i jan`,
-             CASE
-               WHEN `Ny i desember` THEN 'Nye brukere'
-               WHEN IFNULL(aktive_dager, 0) > 0 AND IFNULL(`Aktive dager i des`, 0) > 0 THEN 'tilbakevendende'
-               WHEN IFNULL(aktive_dager, 0) > 0 AND NOT IFNULL(`Aktive dager i des`, 0) > 0 THEN 'mistede'
-               WHEN NOT IFNULL(aktive_dager, 0) > 0 AND IFNULL(`Aktive dager i des`, 0) > 0 THEN 'reaktiverte'
-             END `Brukstype des`,
-             CASE
-               WHEN `Ny i januar` THEN 'Nye brukere'
-               WHEN IFNULL(`Aktive dager i des`, 0) > 0 AND IFNULL(`Aktive dager i jan`, 0) > 0 THEN 'tilbakevendende'
-               WHEN IFNULL(`Aktive dager i des`, 0) > 0 AND NOT IFNULL(`Aktive dager i jan`, 0) > 0 THEN 'mistede'
-               WHEN NOT IFNULL(`Aktive dager i des`, 0) > 0 AND IFNULL(`Aktive dager i jan`, 0) > 0 THEN 'reaktiverte'
-             END `Brukstype jan`,
-             COUNT(nrkUserId) brukere
-        FROM FORRIGE_PERIODE28
-       GROUP BY ALL)
-
-    SELECT *
-      FROM AGG)
+    SELECT dato, userOrProfile, aldersgruppe, 
+           loyaltyGroup,
+           loyaltyGroup_fp,
+           aktive_dager,
+           aktive_dager_fp,
+           CASE
+             WHEN IFNULL(aktive_dager_ffp, 0) > 0 AND IFNULL(aktive_dager_fp, 0) > 0 THEN 'tilbakevendende'
+             WHEN IFNULL(aktive_dager_ffp, 0) > 0 AND NOT IFNULL(aktive_dager_fp, 0) > 0 THEN 'mistede'
+             WHEN NOT IFNULL(aktive_dager_ffp, 0) > 0 AND IFNULL(aktive_dager_fp, 0) > 0 THEN 'reaktiverte'
+             ELSE 'dvale'
+           END Brukstype_fp,
+           CASE
+             WHEN IFNULL(aktive_dager_fp, 0) > 0 AND IFNULL(aktive_dager, 0) > 0 THEN 'tilbakevendende'
+             WHEN IFNULL(aktive_dager_fp, 0) > 0 AND NOT IFNULL(aktive_dager, 0) > 0 THEN 'mistede'
+             WHEN NOT IFNULL(aktive_dager_fp, 0) > 0 AND IFNULL(aktive_dager, 0) > 0 THEN 'reaktiverte'
+             ELSE 'dvale'
+           END Brukstype,
+           COUNT(nrkUserId) brukere
+      FROM FORRIGE_PERIODE28
+     GROUP BY ALL)
 #+end_src
 
 Denne spørringen gir samme resultat som over, men fordeler bruken på tjenestene NRK.no, NRK Radio, NRK TV og NRK Super.
 #+begin_src sql
+  #standardSQL
   CREATE OR REPLACE TABLE `nrk-scratchbook.Emil.TLGtall` AS (
-
   WITH
-    ALL_DATES_AND_USERS AS (
-      SELECT partitionDate, nrkUserId, nrkService
-        FROM UNNEST(GENERATE_DATE_ARRAY('2024-11-27', '2025-01-22', INTERVAL 28 day)) partitionDate
-             CROSS JOIN (SELECT nrkUserId FROM `nrk-datahub.prod.registered_users_v01`)
-             CROSS JOIN UNNEST(['nrkno', 'nrkradio', 'nrksuper', 'nrktv']) nrkService
-    ),
-
     SOURCE_ALL AS (
-      SELECT partitionDate dato, nrkUserId, userOrProfile, loyaltyGroup.groupName loyaltyGroup, nrkService,
+      SELECT partitionDate dato, nrkUserId, nrkService, userOrProfile, loyaltyGroup.groupName loyaltyGroup,
              IF(userOrProfile != 'user',
-               CASE
-                 WHEN EXTRACT(YEAR FROM partitionDate) - birthYear IS NULL THEN NULL
-                 WHEN EXTRACT(YEAR FROM partitionDate) - birthYear < 13 THEN CAST(EXTRACT(YEAR FROM partitionDate) - birthYear AS STRING)
-                 ELSE '13'
-               END,
-               CASE
-                 WHEN EXTRACT(YEAR FROM partitionDate) - birthYear IS NULL THEN NULL
-                 WHEN EXTRACT(YEAR FROM partitionDate) - birthYear < 0 THEN '-1'
-                 WHEN EXTRACT(YEAR FROM partitionDate) - birthYear < 13 THEN '0-12'
-                 WHEN EXTRACT(YEAR FROM partitionDate) - birthYear < 20 THEN '13-19'
-                 WHEN EXTRACT(YEAR FROM partitionDate) - birthYear < 30 THEN '20-29'
-                 WHEN EXTRACT(YEAR FROM partitionDate) - birthYear < 50 THEN '30-49'
-                 WHEN EXTRACT(YEAR FROM partitionDate) - birthYear < 70 THEN '50-69'
-                 ELSE '70+'
-               END) aldersgruppe,
-             DATE(registered) >= partitionDate - 28 AND DATE(registered) < partitionDate ny_bruker,
+                CASE
+                  WHEN EXTRACT(YEAR FROM partitionDate) - birthYear IS NULL THEN NULL
+                  WHEN EXTRACT(YEAR FROM partitionDate) - birthYear < 13 THEN CAST(EXTRACT(YEAR FROM partitionDate) - birthYear AS STRING)
+                  ELSE '13'
+                END,
+                CASE
+                  WHEN EXTRACT(YEAR FROM partitionDate) - birthYear IS NULL THEN NULL
+                  WHEN EXTRACT(YEAR FROM partitionDate) - birthYear < 0 THEN '-1'
+                  WHEN EXTRACT(YEAR FROM partitionDate) - birthYear < 13 THEN '0-12'
+                  WHEN EXTRACT(YEAR FROM partitionDate) - birthYear < 20 THEN '13-19'
+                  WHEN EXTRACT(YEAR FROM partitionDate) - birthYear < 30 THEN '20-29'
+                  WHEN EXTRACT(YEAR FROM partitionDate) - birthYear < 50 THEN '30-49'
+                  WHEN EXTRACT(YEAR FROM partitionDate) - birthYear < 70 THEN '50-69'
+                  ELSE '70+'
+                END) aldersgruppe,
              CASE
                WHEN last28Days.daysVisited = 0 THEN 0
                WHEN last28Days.daysVisited < 4 THEN 3
@@ -143,146 +120,302 @@ Denne spørringen gir samme resultat som over, men fordeler bruken på tjenesten
                WHEN last28Days.daysVisited < 22 THEN 21
                WHEN last28Days.daysVisited < 29 THEN 28
              END aktive_dager,
-        FROM ALL_DATES_AND_USERS
-             LEFT JOIN `nrk-datahub.prod.registered_users_v01` USING(nrkUserId)
-             LEFT JOIN `nrk-datahub.snowplow_aggregate.rfv_v01` USING(partitionDate, nrkUserId, nrkService)
-       WHERE partitionDate IN ('2024-11-27', '2024-12-25', '2025-01-22')
-       ORDER BY nrkUserId, dato
-    ),
+        FROM `nrk-datahub.snowplow_aggregate.rfv_v01`
+             JOIN `nrk-datahub.prod.registered_users_v01` USING(nrkUserId)
+       WHERE partitionDate IN UNNEST(GENERATE_DATE_ARRAY('2025-01-22' - 28*12, '2025-01-22', INTERVAL 28 day))
+         AND nrkService IN ('nrkno', 'nrkradio', 'nrktv', 'nrksuper')
+       ORDER BY nrkUserId, dato),
 
     FORRIGE_PERIODE28 AS (
-      SELECT nov.*,
-             des.loyaltyGroup lojalitet_des, des.ny_bruker `Ny i desember`, des.aktive_dager `Aktive dager i des`,
-             jan.loyaltyGroup lojalitet_jan, jan.ny_bruker `Ny i januar`, jan.aktive_dager `Aktive dager i jan`
-        FROM (SELECT * FROM SOURCE_ALL WHERE dato = '2024-11-27') nov
-             LEFT JOIN (SELECT * FROM SOURCE_ALL WHERE dato = '2024-12-25') des USING(nrkUserId)
-             LEFT JOIN (SELECT * FROM SOURCE_ALL WHERE dato = '2025-01-22') jan USING(nrkUserId)
-    ),
+      SELECT sa.*,
+             sa_fp.loyaltyGroup loyaltyGroup_fp, sa_fp.aktive_dager aktive_dager_fp, --sa_fp.ny_bruker ny_bruker_fp,
+             sa_ffp.loyaltyGroup loyaltyGroup_ffp, sa_ffp.aktive_dager aktive_dager_ffp,-- sa_ffp.ny_bruker ny_bruker_ffp
+        FROM SOURCE_ALL sa
+             LEFT JOIN SOURCE_ALL sa_fp ON sa.dato = sa_fp.dato + 28 AND sa.nrkUserId = sa_fp.nrkUserId AND sa.nrkService = sa_fp.nrkService
+             LEFT JOIN SOURCE_ALL sa_ffp ON sa.dato = sa_ffp.dato + 28 * 2 AND sa.nrkUserId = sa_ffp.nrkUserId AND sa.nrkService = sa_ffp.nrkService)
 
-    AGG AS (
-      SELECT dato, userOrProfile, aldersgruppe, nrkService,
-             loyaltyGroup lojalitet_nov,
-             lojalitet_des,
-             lojalitet_jan, 
-             IFNULL(aktive_dager, 0) `Aktive dager i nov`, 
-             IFNULL(`Aktive dager i des`, 0) `Aktive dager i des`,
-             IFNULL(`Aktive dager i jan`, 0) `Aktive dager i jan`,
-             CASE
-               WHEN `Ny i desember` THEN 'Nye brukere'
-               WHEN IFNULL(aktive_dager, 0) > 0 AND IFNULL(`Aktive dager i des`, 0) > 0 THEN 'tilbakevendende'
-               WHEN IFNULL(aktive_dager, 0) > 0 AND NOT IFNULL(`Aktive dager i des`, 0) > 0 THEN 'mistede'
-               WHEN NOT IFNULL(aktive_dager, 0) > 0 AND IFNULL(`Aktive dager i des`, 0) > 0 THEN 'reaktiverte'
-             END `Brukstype des`,
-             CASE
-               WHEN `Ny i januar` THEN 'Nye brukere'
-               WHEN IFNULL(`Aktive dager i des`, 0) > 0 AND IFNULL(`Aktive dager i jan`, 0) > 0 THEN 'tilbakevendende'
-               WHEN IFNULL(`Aktive dager i des`, 0) > 0 AND NOT IFNULL(`Aktive dager i jan`, 0) > 0 THEN 'mistede'
-               WHEN NOT IFNULL(`Aktive dager i des`, 0) > 0 AND IFNULL(`Aktive dager i jan`, 0) > 0 THEN 'reaktiverte'
-             END `Brukstype jan`,
-             COUNT(nrkUserId) brukere
-        FROM FORRIGE_PERIODE28
+    SELECT dato, userOrProfile, aldersgruppe, nrkService,
+           loyaltyGroup,
+           loyaltyGroup_fp,
+           aktive_dager,
+           aktive_dager_fp,
+           CASE
+             WHEN IFNULL(aktive_dager_ffp, 0) > 0 AND IFNULL(aktive_dager_fp, 0) > 0 THEN 'tilbakevendende'
+             WHEN IFNULL(aktive_dager_ffp, 0) > 0 AND NOT IFNULL(aktive_dager_fp, 0) > 0 THEN 'mistede'
+             WHEN NOT IFNULL(aktive_dager_ffp, 0) > 0 AND IFNULL(aktive_dager_fp, 0) > 0 THEN 'reaktiverte'
+             ELSE 'dvale'
+           END Brukstype_fp,
+           CASE
+             WHEN IFNULL(aktive_dager_fp, 0) > 0 AND IFNULL(aktive_dager, 0) > 0 THEN 'tilbakevendende'
+             WHEN IFNULL(aktive_dager_fp, 0) > 0 AND NOT IFNULL(aktive_dager, 0) > 0 THEN 'mistede'
+             WHEN NOT IFNULL(aktive_dager_fp, 0) > 0 AND IFNULL(aktive_dager, 0) > 0 THEN 'reaktiverte'
+             ELSE 'dvale'
+           END Brukstype,
+           COUNT(nrkUserId) brukere
+      FROM FORRIGE_PERIODE28
+     GROUP BY ALL)
+#+end_src
+** Oversikt over utgravingsområdet
+La oss se hvordan hvordan kombinasjoner av brukstype siste og nest siste periode ser ut.
+
+#+begin_src sql
+  #standardSQL
+  WITH
+    A AS (
+      SELECT dato, Brukstype_fp, Brukstype, SUM(brukere) Brukere
+        FROM `nrk-scratchbook.Emil.TLGtall_tot`
        GROUP BY ALL)
 
-    SELECT * FROM AGG)
+    SELECT *
+      FROM A
+     WHERE dato = '2024-12-25'
+     ORDER BY 1, 2
 #+end_src
+
+
+|       dato | Brukstype_fp    | Brukstype       | Brukere |
+|------------+-----------------+-----------------+---------|
+| 2 024-12-25 | dvale           | reaktiverte     |  132 385 |
+| 2 024-12-25 | dvale           | nye brukere     |   41 071 |
+| 2 024-12-25 | dvale           | dvale           |   18 501 |
+| 2 024-12-25 | mistede         | reaktiverte     |   85 071 |
+| 2 024-12-25 | mistede         | dvale           |  103 604 |
+| 2 024-12-25 | nye brukere     | reaktiverte     |     128 |
+| 2 024-12-25 | nye brukere     | dvale           |      11 |
+| 2 024-12-25 | nye brukere     | tilbakevendende |   35 212 |
+| 2 024-12-25 | nye brukere     | mistede         |   14 965 |
+| 2 024-12-25 | reaktiverte     | tilbakevendende |  193 173 |
+| 2 024-12-25 | reaktiverte     | mistede         |   93 507 |
+| 2 024-12-25 | tilbakevendende | tilbakevendende | 1 574 456 |
+| 2 024-12-25 | tilbakevendende | mistede         |  106 886 |
+
+Hva betyr disse?
+- dvale :: betyr at brukeren ikke har besøkt NRK siste eller nest siste periode.
+- mistede :: er brukere som besøkte NRK nest site periode, men ikke siste periode.
+- nye brukere :: er brukere som har registrert seg siste periode.
+- reaktiverte :: er brukere som ikke besøkte NRK nest siste periode, men besøkte oss siste periode.
+- tilbakevendende :: er brukere som besøkte oss både nest siste og siste periode.
+
+Vi er her interessert i å finne ut om flere brukere besøker NRK i desember og ikke kommer tilbake i januar enn andre måneder. Vi er dermed ute etter brukere som ble reaktivert eller opprettet i desember og mistet i januar. Så vi finner også snittet for fireukersperiodene vi har data for.
 ** Det første jordlaget
-Vi begynner med å se på hvor stor andel av brukerne som bare har besøkt NRK i desember.
+Vi begynner med å se på hvor stor andel av brukerne som bare har besøkt NRK i desember, og sammenligner med de andre månedene.
+#+name: spørring
 #+begin_src sql
   #standardSQL
-   SELECT userOrProfile, --lojalitet_des, 
-        SUM(IF((`Brukstype des` = 'reaktiverte' OR `Brukstype des` = 'Nye brukere') AND (`Brukstype jan` = 'mistede' OR `Brukstype jan` IS NULL), brukere, 0)) `Kommer og drar i des`,
-        SUM(IF(`Brukstype des` IS NOT NULL OR `Brukstype des` != 'mistede', brukere, 0)) `Tot brukere i desember`,
-        ROUND(SUM(IF((`Brukstype des` = 'reaktiverte' OR `Brukstype des` = 'Nye brukere') AND (`Brukstype jan` = 'mistede' OR `Brukstype jan` IS NULL), brukere, 0)) / SUM(IF(`Brukstype des` IS NOT NULL OR `Brukstype des` != 'mistede', brukere, 0)), 3) andel
-   FROM `nrk-scratchbook.Emil.TLGtall_tot`
-  --WHERE (`Brukstype jan` = 'mistede' OR `Brukstype jan` IS NULL)
-  GROUP BY ALL
-  ORDER BY 1, 2
+  WITH
+    GL AS (
+      SELECT userOrProfile, dato, 
+             SUM(IF((Brukstype_fp = 'reaktiverte' OR Brukstype_fp = 'nye brukere')
+                    AND (Brukstype = 'mistede'), brukere, 0)) `Kommer og drar`,
+             SUM(IF(Brukstype_fp != 'dvale' OR Brukstype_fp != 'mistede', brukere, 0)) `Tot brukere`,
+        FROM `nrk-scratchbook.Emil.TLGtall_tot`
+       GROUP BY ALL),
+
+    UR AS (
+    SELECT CONCAT(FORMAT_DATE('%d. %h', LAG(dato, 2) OVER(PARTITION BY userOrProfile ORDER BY dato)), ' - ',
+                  FORMAT_DATE('%d. %h', LAG(dato) OVER(PARTITION BY userOrProfile ORDER BY dato))) periode,
+           ,*,
+           ROUND(`Kommer og drar` / `Tot brukere`, 3) Andel
+      FROM GL)
+
+    SELECT * EXCEPT(dato)
+      FROM UR
+     WHERE periode IS NOT NULL
+     ORDER BY 2, dato
+#+end_src
+
+#+begin_src python
+  import pandas as pd
+  import matplotlib.pyplot as plt
+  import numpy as np
+  import pandas_gbq
+#+end_src
+
+#+begin_src python
+  df = pandas_gbq.read_gbq(spørring, dialect = "standard")
+  df.periode = df.periode.str.replace("-", "-\n")
+#+end_src
+
+#+begin_src python
+  benevning = ["Andel", "Antall"]
+  tittel = " brukere som kommer og går i samme periode"
+  x_lapp = "Periode"
+  y_lapp = " brukere"
+
+  fig,ax = plt.subplots(2, 1, figsize = (11,7), layout="constrained")
+  ax[0].plot(df.loc[df.userOrProfile=="profile"].periode,
+             df.loc[df.userOrProfile=="profile"].Andel,label="profile")
+  ax[0].plot(df.loc[df.userOrProfile=="user"].periode,
+             df.loc[df.userOrProfile=="user"].Andel,label="user")
+
+  ax[1].plot(df.loc[df.userOrProfile=="profile"].periode,
+             df.loc[df.userOrProfile=="profile", "Kommer og drar"], label="profile")
+  ax[1].plot(df.loc[df.userOrProfile=="user"].periode,
+             df.loc[df.userOrProfile=="user", "Kommer og drar"], label="user")
+
+  ax[0].legend(loc="upper left")
+  for i in range(2):
+      ax[i].set_title(benevning[i]+tittel)
+      ax[i].set_xlabel(x_lapp)
+      ax[i].set_ylabel(benevning[i]+y_lapp)
+  fig
 #+end_src
 
 
-| userOrProfile | Kommer og drar i des | Tot brukere i desember | andel |
-|---------------+----------------------+------------------------+-------|
-| profile       |                29042 |                 310036 | 0.094 |
-| user          |                71894 |                1970740 | 0.036 |
+[[file:figurer/profiler.png]]
 
-Det er bare 9,4 % av barneprofilene og 3,6 % av voksenprofilene som kommer til oss og forlater oss i desember.
+Det er bare 7,6 % av barneprofilene og 2,8 % av voksenprofilene som kommer til oss og forlater oss i desember.
 *** Lojalitet
 Hvordan ser dette ut per lojalitetsgruppe? Blanke verdier er brukere som ikke har fått noen gruppe ennå.
-
+#+name: spørring2
 #+begin_src sql
   #standardSQL
-   SELECT userOrProfile, lojalitet_des lojalitet, 
-        SUM(IF((`Brukstype des` = 'reaktiverte' OR `Brukstype des` = 'Nye brukere') AND (`Brukstype jan` = 'mistede' OR `Brukstype jan` IS NULL), brukere, 0)) `Kommer og drar i des`,
-        SUM(IF(`Brukstype des` IS NOT NULL OR `Brukstype des` != 'mistede', brukere, 0)) `Tot brukere i desember`,
-        ROUND(SUM(IF((`Brukstype des` = 'reaktiverte' OR `Brukstype des` = 'Nye brukere') AND (`Brukstype jan` = 'mistede' OR `Brukstype jan` IS NULL), brukere, 0)) / SUM(IF(`Brukstype des` IS NOT NULL OR `Brukstype des` != 'mistede', brukere, 0)), 3) andel
-   FROM `nrk-scratchbook.Emil.TLGtall_tot`
-  --WHERE (`Brukstype jan` = 'mistede' OR `Brukstype jan` IS NULL)
-  GROUP BY ALL
-  ORDER BY 1, 2
+  WITH
+    GL AS (
+      SELECT userOrProfile, dato, loyaltyGroup_fp lojalitet,
+             SUM(IF((Brukstype_fp = 'reaktiverte' OR Brukstype_fp = 'nye brukere')
+                    AND (Brukstype = 'mistede'), brukere, 0)) `Kommer og drar`,
+             SUM(IF(Brukstype_fp != 'dvale' OR Brukstype_fp != 'mistede', brukere, 0)) `Tot brukere`,
+        FROM `nrk-scratchbook.Emil.TLGtall_tot`
+       GROUP BY ALL),
+
+    UR AS (
+    SELECT CONCAT(FORMAT_DATE('%d. %h', LAG(dato,2) OVER(PARTITION BY userOrProfile, lojalitet ORDER BY dato)), ' - ',
+                  FORMAT_DATE('%d. %h', LAG(dato) OVER(PARTITION BY userOrProfile, lojalitet ORDER BY dato))) periode,
+           ,*,
+           ROUND(`Kommer og drar` / `Tot brukere`, 3) Andel
+      FROM GL)
+
+    SELECT * EXCEPT(dato)
+      FROM UR
+     WHERE periode IS NOT NULL
+     ORDER BY 2, dato, 3
 #+end_src
 
+#+begin_src python
+  df = pandas_gbq.read_gbq(spørring, dialect = "standard")
+  df.periode = df.periode.str.replace("-", "-\n")
+  df = df.loc[~df.lojalitet.isna()]
+#+end_src
 
-| userOrProfile | lojalitet       | Kommer og drar i des | Tot brukere i desember | andel |
-|---------------+-----------------+----------------------+------------------------+-------|
-| profile       |                 |                 1237 |                   1771 | 0.698 |
-| profile       | Fan             |                   28 |                  64762 |   0.0 |
-| profile       | Fast Følge      |                  464 |                  46602 |  0.01 |
-| profile       | Langdistanse    |                 1809 |                  54719 | 0.033 |
-| profile       | One-Night-Stand |                 5966 |                  56099 | 0.106 |
-| profile       | Slår opp        |                19538 |                  86083 | 0.227 |
-| user          |                 |                 1836 |                   2143 | 0.857 |
-| user          | Fan             |                   57 |                 733191 |   0.0 |
-| user          | Fast Følge      |                  796 |                 289373 | 0.003 |
-| user          | Langdistanse    |                 3186 |                 289490 | 0.011 |
-| user          | One-Night-Stand |                11669 |                 256429 | 0.046 |
-| user          | Slår opp        |                54350 |                 400114 | 0.136 |
+#+begin_src python
+  fig,ax = plt.subplots(2, 1, figsize = (11,7), layout="constrained")
+  for p, l in  [[p,l] for l in df.lojalitet.unique()[::-1] for p in df.userOrProfile.unique()]:   
+      ax[0].plot(df.loc[(df.userOrProfile==p) & (df.lojalitet==l)].periode,
+                 df.loc[(df.userOrProfile==p) & (df.lojalitet==l)].Andel, label=p+": "+l)
+      ax[1].plot(df.loc[(df.userOrProfile==p) & (df.lojalitet==l)].periode,
+                 df.loc[(df.userOrProfile==p) & (df.lojalitet==l), "Kommer og drar"], label=p+": "+l)
 
-Ikke overraskende er det flest antall brukerne som er minst lojale som kommer og går i desember. Det er også blant disse brukerne andelen som kommer og går i desember er størst.
+  ax[0].legend(loc="upper left")
+  for i in range(2):
+      ax[i].set_title(benevning[i]+tittel)
+      ax[i].set_xlabel(x_lapp)
+      ax[i].set_ylabel(benevning[i]+y_lapp)
+
+  fig
+#+end_src
+
+[[file:figurer/profiler_og_lojalitet.png]]
+
+Ikke overraskende er det flest antall brukerne som er minst lojale som kommer og går i desember, men dette gjelder kun barneprofilene. Blant voksenprofilene er andelen som kommer og går i desember mindre enn andre måneder. Det er også blant disse brukerne andelen som kommer og går i desember er størst.
 *** Tjeneste
 Nå gjør vi samme øvelse per tjeneste:
+#+name: spørring_tjeneste
 #+begin_src sql
   #standardSQL
-   SELECT userOrProfile, nrkService, 
-        SUM(IF((`Brukstype des` = 'reaktiverte' OR `Brukstype des` = 'Nye brukere') AND (`Brukstype jan` = 'mistede' OR `Brukstype jan` IS NULL), brukere, 0)) `Kommer og drar i des`,
-        SUM(IF(`Brukstype des` IS NOT NULL OR `Brukstype des` != 'mistede', brukere, 0)) `Tot brukere i desember`,
-        ROUND(SUM(IF((`Brukstype des` = 'reaktiverte' OR `Brukstype des` = 'Nye brukere') AND (`Brukstype jan` = 'mistede' OR `Brukstype jan` IS NULL), brukere, 0)) / SUM(IF(`Brukstype des` IS NOT NULL OR `Brukstype des` != 'mistede', brukere, 0)), 3) andel
-   FROM `nrk-scratchbook.Emil.TLGtall`
-  --WHERE (`Brukstype jan` = 'mistede' OR `Brukstype jan` IS NULL)
-  GROUP BY ALL
-  ORDER BY 1, 2
+  WITH
+    GL AS (
+      SELECT userOrProfile, dato, nrkService tjeneste, 
+             SUM(IF(Brukstype_fp = 'reaktiverte'
+                    AND Brukstype = 'mistede', brukere, 0)) `Kommer og drar`,
+             SUM(IF(Brukstype_fp IN ('reaktiverte', 'tilbakevendende'), brukere, 0)) `Tot brukere`,
+        FROM `nrk-scratchbook.Emil.TLGtall`
+       GROUP BY ALL),
+
+    UR AS (
+    SELECT CONCAT(FORMAT_DATE('%d. %h', LAG(dato,2) OVER(PARTITION BY userOrProfile, tjeneste ORDER BY dato)), ' - ',
+                  FORMAT_DATE('%d. %h', LAG(dato) OVER(PARTITION BY userOrProfile, tjeneste ORDER BY dato))) periode,
+           ,*,
+           ROUND(`Kommer og drar` / `Tot brukere`, 3) Andel
+      FROM GL
+     WHERE `Kommer og drar` > 0)
+
+    SELECT * EXCEPT(dato)
+      FROM UR
+     WHERE periode IS NOT NULL
+       AND `Kommer og drar` > 1
+     ORDER BY 2, dato, 3
 #+end_src
 
+#+begin_src python
+  df = pandas_gbq.read_gbq(spørring, dialect = "standard")
+  df.periode = df.periode.str.replace("-", "-\n")
+#+end_src
 
-| userOrProfile | nrkService | Kommer og drar i des | Tot brukere i desember | andel |
-|---------------+------------+----------------------+------------------------+-------|
-| profile       | nrkno      |              1082918 |                1494980 | 0.724 |
-| profile       | nrkradio   |              1082918 |                1494980 | 0.724 |
-| profile       | nrksuper   |               552519 |                3341000 | 0.165 |
-| profile       | nrktv      |               611282 |                3080540 | 0.198 |
-| user          | nrkno      |              3203216 |               21539644 | 0.149 |
-| user          | nrkradio   |              4623324 |               17065820 | 0.271 |
-| user          | nrksuper   |              6718204 |               12596668 | 0.533 |
-| user          | nrktv      |              2312538 |               24758064 | 0.093 |
+#+begin_src python
+  fig,ax = plt.subplots(2, 1, figsize = (11,7), layout="constrained")
+  for p, l in  [[p,l] for l in df.tjeneste.unique()[::-1] for p in df.userOrProfile.unique()]:   
+      ax[0].plot(df.loc[(df.userOrProfile==p) & (df.tjeneste==l)].periode,
+                 df.loc[(df.userOrProfile==p) & (df.tjeneste==l)].Andel, label=p+": "+l)
+      ax[1].plot(df.loc[(df.userOrProfile==p) & (df.tjeneste==l)].periode,
+                 df.loc[(df.userOrProfile==p) & (df.tjeneste==l), "Kommer og drar"], label=p+": "+l)
+
+  ax[0].legend(loc="upper left")
+  for i in range(2):
+      ax[i].set_title(benevning[i]+tittel)
+      ax[i].set_xlabel(x_lapp)
+      ax[i].set_ylabel(benevning[i]+y_lapp)
+
+  fig
+#+end_src
+
+[[file:figurer/profiler_og_tjeneste.png]]
 *** Aldersgrupper
 Nå skal vi gjøre samme øvelse for voksenprofiler fordelt på alder
+#+name: spørring3
 #+begin_src sql
   #standardSQL
-   SELECT aldersgruppe, --lojalitet_des, 
-        SUM(IF((`Brukstype des` = 'reaktiverte' OR `Brukstype des` = 'Nye brukere') AND (`Brukstype jan` = 'mistede' OR `Brukstype jan` IS NULL), brukere, 0)) `Kommer og drar i des`,
-        SUM(IF(`Brukstype des` IS NOT NULL OR `Brukstype des` != 'mistede', brukere, 0)) `Tot brukere i desember`,
-        ROUND(SUM(IF((`Brukstype des` = 'reaktiverte' OR `Brukstype des` = 'Nye brukere') AND (`Brukstype jan` = 'mistede' OR `Brukstype jan` IS NULL), brukere, 0)) / SUM(IF(`Brukstype des` IS NOT NULL OR `Brukstype des` != 'mistede', brukere, 0)), 3) andel
-   FROM `nrk-scratchbook.Emil.TLGtall_tot`
-  WHERE userOrProfile = 'user' AND aldersgruppe != '-1'
-  GROUP BY ALL
-  ORDER BY 1, 2
+  WITH
+    GL AS (
+      SELECT dato, aldersgruppe, userOrProfile,
+             SUM(IF((Brukstype_fp = 'reaktiverte' OR Brukstype_fp = 'nye brukere')
+                    AND (Brukstype = 'mistede'), brukere, 0)) `Kommer og drar`,
+             SUM(IF(Brukstype_fp != 'dvale' OR Brukstype_fp != 'mistede', brukere, 0)) `Tot brukere`,
+        FROM `nrk-scratchbook.Emil.TLGtall_tot`
+       GROUP BY ALL),
+
+    UR AS (
+      SELECT CONCAT(FORMAT_DATE('%d. %h', LAG(dato, 2) OVER(PARTITION BY aldersgruppe ORDER BY dato)), ' - ',
+                    FORMAT_DATE('%d. %h', LAG(dato) OVER(PARTITION BY aldersgruppe ORDER BY dato))) periode,
+             ,*,
+             ROUND(`Kommer og drar` / `Tot brukere`, 3) Andel
+        FROM GL
+       WHERE userOrProfile = 'user')
+
+    SELECT * EXCEPT(dato, userOrProfile)
+      FROM UR
+     WHERE periode IS NOT NULL
+       AND NOT (aldersgruppe = '-1' OR aldersgruppe IS NULL)
+     ORDER BY 2, dato, 3
 #+end_src
 
+#+begin_src python
+  df = pandas_gbq.read_gbq(spørring, dialect = "standard")
+  df.periode = df.periode.str.replace("-", "-\n")
+#+end_src
 
-| aldersgruppe | Kommer og drar i des | Tot brukere i desember | andel |
-|--------------+----------------------+------------------------+-------|
-|         0-12 |                 5238 |                  52784 | 0.099 |
-|        13-19 |                 8080 |                  93457 | 0.086 |
-|        20-29 |                10795 |                 179070 |  0.06 |
-|        30-49 |                14403 |                 368459 | 0.039 |
-|        50-69 |                12452 |                 380321 | 0.033 |
-|          70+ |                 5913 |                 152976 | 0.039 |
+#+begin_src python
+  fig,ax = plt.subplots(2, 1, figsize = (11,7), layout="constrained")
+  for a in df.aldersgruppe.unique():
+      ax[0].plot(df.loc[df.aldersgruppe == a].periode, df.loc[df.aldersgruppe == a].Andel, label=a)
+      ax[1].plot(df.loc[df.aldersgruppe == a].periode, df.loc[df.aldersgruppe == a, "Kommer og drar"], label=a)
+
+  ax[0].legend(loc="upper left")
+  for i in range(2):
+      ax[i].set_title(benevning[i]+tittel)
+      ax[i].set_xlabel(x_lapp)
+      ax[i].set_ylabel(benevning[i]+y_lapp)
+  fig
+#+end_src
+** Hvem var brukerne som kom og dro i desember?
+Dette har Elise laget en [[https://app.powerbi.com/groups/me/reports/c100415a-e5b3-490f-9525-c542fd0b2807/ReportSection?ctid=9d2ac018-e843-4e14-9e2b-4e0ddac75450&experience=power-bi][PowerBi-rapport]] på.
