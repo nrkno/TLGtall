@@ -437,7 +437,7 @@ Nå skal vi gjøre samme øvelse for voksenprofiler fordelt på alder
   WITH
     GL AS (
       SELECT dato, aldersgruppe, userOrProfile,
-             SUM(IF((Brukstype_fp = 'reaktiverte' OR Brukstype_fp = 'Nye brukere')
+             SUM(IF((Brukstype_fp = 'reaktiverte' OR Brukstype_fp = 'nye brukere')
   		  AND (Brukstype = 'mistede'), brukere, 0)) `Kommer og drar`,
              SUM(IF(Brukstype_fp != 'dvale' OR Brukstype_fp != 'mistede', brukere, 0)) `Tot brukere`,
         FROM `nrk-scratchbook.Emil.TLGtall_tot`
@@ -484,3 +484,4 @@ Nå skal vi gjøre samme øvelse for voksenprofiler fordelt på alder
 #+end_src
 
 ** Hvem var brukerne som kom og dro i desember?
+Dette har Elise laget en [[https://app.powerbi.com/groups/me/reports/c100415a-e5b3-490f-9525-c542fd0b2807/ReportSection?ctid=9d2ac018-e843-4e14-9e2b-4e0ddac75450&experience=power-bi][PowerBi-rapport]] på.
